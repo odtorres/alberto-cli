@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package transfer;
+
+// Metadata que viaja SIEMPRE como primer mensaje del stream.
+message TransferMeta {
+  string tenant = 1;
+  string type = 2;
+  string title = 3;
+  string description = 4;
+  string filename = 5;
+  string parent_id = 6;
+  string username = 7;
+  // `data` del nodo serializado como JSON.
+  string data_json = 8;
+  // "plain" | "assoc" | "signed"
+  string variant = 9;
+  string assoc_id = 10;
+  string ref_signed_id = 11;
+  // Clave de idempotencia generada por el CLIENTE (UUID). Reintentos de la
+  // misma subida lógica deben reutilizar el mismo valor: el servidor
+  // deduplica contra la BD y devuelve el nodo ya creado en vez de duplicar.
+  // Vacío => sin deduplicación (comportamiento clásico).
+  string client_ref = 12;
+}
+
+// Primer mensaje = meta; siguientes = chunk (bytes crudos al WAL).
+message ChunkRequest {
+  oneof payload {
+    TransferMeta meta = 1;
+    bytes chunk = 2;
+  }
+}
+
+message TransferReply {
+  string transfer_id = 1;
+  string unique_id = 2;
+  string status = 3;
+  string result = 4;
+  // true si la respuesta corresponde a un nodo ya existente (dedup por
+  // client_ref): no se creó un nodo nuevo.
+  bool duplicated = 5;
+}
+
+service BinaryTransferService {
+  // Client streaming: stream de ChunkRequest -> un TransferReply.
+  rpc Upload(stream ChunkRequest) returns (TransferReply);
+}
