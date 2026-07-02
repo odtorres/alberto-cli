@@ -1,5 +1,8 @@
 # alberto-cli 🦀
 
+> 📖 **Manual de usuario completo** (inicio rápido, recetas, troubleshooting):
+> [`docs/manual-alberto-cli.md`](../../docs/manual-alberto-cli.md)
+
 CLI en Rust para **NodeService**, 100% sobre los servicios gRPC nuevos:
 
 - **`upload`** → `transfer.BinaryTransferService` (streaming con backpressure)
