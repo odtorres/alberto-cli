@@ -21,6 +21,11 @@ pub mod transfer {
     tonic::include_proto!("transfer");
 }
 
+pub mod nodemanager {
+    tonic::include_proto!("nodemanager");
+}
+
+use nodemanager::node_manager_service_client::NodeManagerServiceClient;
 use transfer::binary_transfer_service_client::BinaryTransferServiceClient;
 use transfer::{chunk_request::Payload, ChunkRequest, TransferMeta};
 
@@ -80,7 +85,7 @@ enum Cmd {
         #[arg(long, default_value_t = 3)]
         retries: u32,
     },
-    /// Operaciones de lectura de nodos (REST / node_manager)
+    /// Operaciones de nodos vía gRPC NodeManagerService (respuesta monádica)
     Node {
         #[command(subcommand)]
         cmd: NodeCmd,
@@ -102,26 +107,54 @@ enum Cmd {
     },
 }
 
+#[derive(clap::Args)]
+struct GrpcOpts {
+    /// Endpoint gRPC
+    #[arg(long, env = "ALBERTO_GRPC_ENDPOINT", default_value = "http://127.0.0.1:9090")]
+    endpoint: String,
+    /// API key (metadata x-api-key)
+    #[arg(long, env = "ALBERTO_API_KEY")]
+    api_key: String,
+}
+
 #[derive(Subcommand)]
 enum NodeCmd {
-    /// Obtiene un nodo por unique_id (GET /internal/node/:id — requiere API key global)
+    /// Obtiene un nodo por unique_id (NodeGet)
     Get {
         id: String,
-        #[arg(long, env = "ALBERTO_REST_URL", default_value = "http://127.0.0.1:3537")]
-        rest_url: String,
-        /// API key (header x-api-key)
-        #[arg(long, env = "ALBERTO_API_KEY")]
-        api_key: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
     },
-    /// Lista nodos por tipo (GET /internal/nodes/type/:type — requiere API key global)
+    /// Lista nodos por tipo dentro de un tenant (ByType)
     ByType {
         #[arg(long = "type")]
         node_type: String,
-        #[arg(long, env = "ALBERTO_REST_URL", default_value = "http://127.0.0.1:3537")]
-        rest_url: String,
-        /// API key (header x-api-key)
-        #[arg(long, env = "ALBERTO_API_KEY")]
-        api_key: String,
+        #[arg(long)]
+        tenant: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Obtiene un nodo por path (ByPath); --tenant opcional para path relativo
+    ByPath {
+        path: String,
+        #[arg(long, default_value = "")]
+        tenant: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Lista los hijos de un nodo (NodeChild); --secondary para secondary_parent
+    Children {
+        id: String,
+        #[arg(long, default_value_t = false)]
+        secondary: bool,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Busca un usuario por username (User; password siempre enmascarada)
+    User {
+        username: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
     },
 }
 
@@ -187,13 +220,30 @@ async fn main() -> Result<()> {
         }
 
         Cmd::Node { cmd } => match cmd {
-            NodeCmd::Get { id, rest_url, api_key } => {
-                let url = format!("{rest_url}/internal/node/{id}");
-                rest_json(&url, &api_key).await?;
+            NodeCmd::Get { id, grpc } => {
+                let req = nodemanager::UniqueIdRequest { unique_id: id };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.node_get(with_key(req, &grpc)?).await?.into_inner())?;
             }
-            NodeCmd::ByType { node_type, rest_url, api_key } => {
-                let url = format!("{rest_url}/internal/nodes/type/{node_type}");
-                rest_json(&url, &api_key).await?;
+            NodeCmd::ByType { node_type, tenant, grpc } => {
+                let req = nodemanager::HomeRequest { tenant, r#type: node_type };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.by_type(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::ByPath { path, tenant, grpc } => {
+                let req = nodemanager::ByPathRequest { tenant, path };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.by_path(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::Children { id, secondary, grpc } => {
+                let req = nodemanager::NodeChildRequest { unique_id: id, secondary };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.node_child(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::User { username, grpc } => {
+                let req = nodemanager::UserRequest { username, password: String::new() };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.user(with_key(req, &grpc)?).await?.into_inner())?;
             }
         },
 
@@ -318,6 +368,45 @@ async fn upload_once(
     let reply = client.upload(request).await?.into_inner();
     pb.finish_and_clear();
     Ok(reply)
+}
+
+// --- NodeManagerService (gRPC) -----------------------------------------------
+
+async fn nm_client(
+    grpc: &GrpcOpts,
+) -> Result<NodeManagerServiceClient<tonic::transport::Channel>> {
+    let channel = tonic::transport::Channel::from_shared(grpc.endpoint.clone())
+        .context("endpoint invalido (usa http://host:puerto)")?
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
+        .connect()
+        .await
+        .context("no se pudo conectar al endpoint gRPC")?;
+
+    Ok(NodeManagerServiceClient::new(channel))
+}
+
+fn with_key<T>(req: T, grpc: &GrpcOpts) -> Result<tonic::Request<T>> {
+    let mut request = tonic::Request::new(req);
+    request.metadata_mut().insert(
+        "x-api-key",
+        grpc.api_key.parse().context("api key con caracteres invalidos")?,
+    );
+    Ok(request)
+}
+
+/// Imprime la respuesta monádica: ok=true -> result_json a stdout;
+/// ok=false -> error a stderr y exit != 0 ({:error, _}).
+fn print_monadic(reply: nodemanager::MonadicReply) -> Result<()> {
+    if reply.ok {
+        match serde_json::from_str::<serde_json::Value>(&reply.result_json) {
+            Ok(v) => println!("{}", serde_json::to_string_pretty(&v)?),
+            Err(_) => println!("{}", reply.result_json),
+        }
+        Ok(())
+    } else {
+        bail!("{{:error, {}}}", reply.error);
+    }
 }
 
 // --- REST helpers ------------------------------------------------------------

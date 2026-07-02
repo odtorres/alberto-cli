@@ -1,0 +1,170 @@
+syntax = "proto3";
+
+package nodemanager;
+
+// ============================================================================
+// Versión gRPC de los servicios del GenServer NodeService.NodeManager.
+//
+// REGLA DE ORO: TODA respuesta es monádica (MonadicReply), sin importar si el
+// handle_call original devolvía valor plano o tupla {:ok,_}/{:error,_}.
+//   ok=true  -> result_json trae el valor (JSON)   == {:ok, value}
+//   ok=false -> error trae la razón                == {:error, reason}
+//
+// El server NO pasa por el mailbox del GenServer NodeManager: replica los
+// cuerpos de los handle_call llamando directo a NodeServer/Common.
+//
+// Autenticación: metadata x-api-key (igual que la capa HTTP y que Upload).
+// ============================================================================
+
+// Respuesta monádica universal.
+message MonadicReply {
+  bool ok = 1;             // true == {:ok, _} | false == {:error, _}
+  string result_json = 2;  // valor serializado JSON cuando ok=true
+  string error = 3;        // razón del error cuando ok=false
+  bytes content = 4;       // solo para NodeContent: binario del contenido
+}
+
+// --- requests ---------------------------------------------------------------
+
+message IdsRequest {
+  repeated string ids = 1;
+  string type = 2;               // opcional: filtra por tipo
+}
+
+message UserRequest {
+  string username = 1;
+  string password = 2;           // vacío = solo lookup (sin validar clave)
+}
+
+message DataUpdateRequest {      // :dataupdate (datamerge_strict_m)
+  string unique_id = 1;
+  string data_json = 2;
+}
+
+message BulkDatamergeRequest {   // :bulk_datamerge_m
+  string changes_json = 1;       // JSON con la colección esperada por bulk_datamerge_m
+}
+
+message PatchRequest {           // :patch_m
+  string envelope_path = 1;      // path del nodo, ej /tenants/t/documentlibrary/x
+  repeated string path = 2;      // ruta dentro del data
+  string data_json = 3;          // valor a colocar
+}
+
+message GetRequest {             // :get_m (con o sin path interno)
+  string node_path = 1;
+  repeated string path = 2;      // vacío = nodo completo
+}
+
+message DatamergeRequest {       // :datamerge_m
+  string unique_id = 1;
+  string data_json = 2;
+}
+
+message NameRequest {            // :nodebyname
+  string name = 1;
+}
+
+message PackageRequest {         // :package_m
+  string tenant = 1;
+  string type = 2;
+}
+
+message NodeCreateRequest {      // :node_m (parent, data, type)
+  string parent_id = 1;
+  string data_json = 2;          // debe incluir "name"
+  string type = 3;
+}
+
+message UniqueIdRequest {        // :node_m (get) / :nodecontent_m / :nodechild
+  string unique_id = 1;
+}
+
+message TenantGetRequest {       // :tenant (consulta)
+  string tenant = 1;
+}
+
+message TenantCreateRequest {    // :tenant (creación)
+  string tenant = 1;
+  string title = 2;
+  string description = 3;
+  string dni = 4;
+  string company_name = 5;
+  string email = 6;
+}
+
+message FolderRequest {          // :folder
+  string parent_id = 1;
+  string data_json = 2;
+  string name = 3;
+  string title = 4;
+  string description = 5;
+}
+
+message DefaultGroupRequest {    // :default_group
+  string name = 1;
+  string parent_id = 2;
+}
+
+message ParentRequest {          // :default_*_group / :doc_lib(nodo)
+  string parent_id = 1;
+}
+
+message TenantRequest {          // :doc_lib / :indexs-like por tenant
+  string tenant = 1;
+}
+
+message HomeRequest {            // :home / :bytype
+  string tenant = 1;
+  string type = 2;
+}
+
+message EmptyRequest {}          // :indexs / :doc_libs_types
+
+message ByPathRequest {          // :bypath_m (tenant opcional)
+  string tenant = 1;             // vacío = path absoluto
+  string path = 2;
+}
+
+message NodeChildRequest {       // :nodechild (primario o secundario)
+  string unique_id = 1;
+  bool secondary = 2;
+}
+
+message SecondaryParentRequest { // :addsecundaryparent / :removesecundaryparent
+  string child_id = 1;
+  string parent_id = 2;
+}
+
+// --- service ----------------------------------------------------------------
+
+service NodeManagerService {
+  rpc Ids(IdsRequest) returns (MonadicReply);                       // :ids
+  rpc User(UserRequest) returns (MonadicReply);                     // :user
+  rpc DataUpdate(DataUpdateRequest) returns (MonadicReply);         // :dataupdate
+  rpc BulkDatamerge(BulkDatamergeRequest) returns (MonadicReply);   // :bulk_datamerge_m
+  rpc Patch(PatchRequest) returns (MonadicReply);                   // :patch_m
+  rpc Get(GetRequest) returns (MonadicReply);                       // :get_m
+  rpc Datamerge(DatamergeRequest) returns (MonadicReply);           // :datamerge_m
+  rpc NodeByName(NameRequest) returns (MonadicReply);               // :nodebyname
+  rpc Package(PackageRequest) returns (MonadicReply);               // :package_m
+  rpc NodeCreate(NodeCreateRequest) returns (MonadicReply);         // :node_m/3
+  rpc NodeGet(UniqueIdRequest) returns (MonadicReply);              // :node_m/1
+  rpc NodeContent(UniqueIdRequest) returns (MonadicReply);          // :nodecontent_m (bytes en content)
+  rpc TenantGet(TenantGetRequest) returns (MonadicReply);           // :tenant (get)
+  rpc TenantCreate(TenantCreateRequest) returns (MonadicReply);     // :tenant (create)
+  rpc Folder(FolderRequest) returns (MonadicReply);                 // :folder
+  rpc DefaultGroup(DefaultGroupRequest) returns (MonadicReply);     // :default_group
+  rpc DefaultColaboratorGroup(ParentRequest) returns (MonadicReply);   // :default_colaborator_group
+  rpc DefaultConsumerGroup(ParentRequest) returns (MonadicReply);      // :default_consumer_group
+  rpc DefaultAdministratorGroup(ParentRequest) returns (MonadicReply); // :default_administrator_group
+  rpc DocLib(TenantRequest) returns (MonadicReply);                 // :doc_lib
+  rpc Home(HomeRequest) returns (MonadicReply);                     // :home
+  rpc Indexs(EmptyRequest) returns (MonadicReply);                  // :indexs
+  rpc DocLibsTypes(EmptyRequest) returns (MonadicReply);            // :doc_libs_types
+  rpc ByType(HomeRequest) returns (MonadicReply);                   // :bytype
+  rpc ByPath(ByPathRequest) returns (MonadicReply);                 // :bypath_m
+  rpc NodeChild(NodeChildRequest) returns (MonadicReply);           // :nodechild
+  rpc AddSecondaryParent(SecondaryParentRequest) returns (MonadicReply);    // :addsecundaryparent
+  rpc RemoveSecondaryParent(SecondaryParentRequest) returns (MonadicReply); // :removesecundaryparent
+}

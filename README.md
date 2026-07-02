@@ -1,7 +1,10 @@
 # alberto-cli 🦀
 
-CLI en Rust para **NodeService**: sube archivos por el nuevo servicio **gRPC
-streaming** (`upload_by_streaming_with_backpressure`) y consulta nodos vía REST.
+CLI en Rust para **NodeService**, 100% sobre los servicios gRPC nuevos:
+
+- **`upload`** → `transfer.BinaryTransferService` (streaming con backpressure)
+- **`node *`** → `nodemanager.NodeManagerService` (operaciones de nodos, respuesta monádica)
+- **`download`** → REST público (descarga de contenido)
 
 > Los endpoints HTTP viejos de upload quedan **excluidos** de este cliente por
 > diseño: la única vía de subida es gRPC.
@@ -18,12 +21,8 @@ Requiere `protoc` instalado (compila `proto/binary_transfer.proto` en build time
 
 ## Autenticación
 
-**Todo** requiere API key (header `x-api-key`), igual que la capa HTTP:
-
-- **Upload gRPC + download**: sirve una key de tenant (`nk_...`) o global.
-- **`node get` / `node by-type`** (rutas `/internal/*`): requieren key **global**
-  (tenant `"global"`), semántica heredada de la capa HTTP.
-
+**Todo** requiere API key (metadata/header `x-api-key`), igual que la capa
+HTTP. Sirve una key de tenant (`nk_...`) o una global (tenant `"global"`).
 Se pasa con `--api-key` o env `ALBERTO_API_KEY`.
 
 ## Configuración
@@ -69,16 +68,33 @@ Características automáticas (sin flags):
   reintentos (`--retries`, default 3) lo reutilizan → **jamás duplica** un
   documento aunque la red se corte tras completarse la subida.
 
-### Consultas y descarga
+### Consultas de nodos (gRPC `NodeManagerService`)
+
+Toda respuesta es **monádica**: `{:ok, valor}` → JSON en stdout, exit 0;
+`{:error, razón}` → `Error: {:error, razón}` en stderr, exit ≠ 0.
 
 ```bash
-# nodo por unique_id (key global)
+# nodo por unique_id (NodeGet)
 alberto node get <UNIQUE_ID>
 
-# nodos por tipo (key global)
-alberto node by-type --type factura
+# nodo por path (ByPath): absoluto o relativo a un tenant
+alberto node by-path /tenants/totalcheck/documentlibrary
+alberto node by-path /documentlibrary/factura --tenant totalcheck
 
-# descarga del contenido binario
+# nodos por tipo en un tenant (ByType)
+alberto node by-type --type factura --tenant totalcheck
+
+# hijos de un nodo (NodeChild); --secondary para secondary_parent
+alberto node children <UNIQUE_ID>
+alberto node children <UNIQUE_ID> --secondary
+
+# usuario por username (User; password siempre enmascarada)
+alberto node user soportevn
+```
+
+### Descarga de contenido
+
+```bash
 alberto download <UNIQUE_ID> --tenant totalcheck -o salida.pdf
 ```
 
@@ -89,8 +105,8 @@ alberto download <UNIQUE_ID> --tenant totalcheck -o salida.pdf
   stderr, exit ≠ 0, **sin reintentos** (son permanentes).
 - Error de red/timeout → reintenta solo con backoff; si se agota, exit ≠ 0.
 
-## Contrato
+## Contratos
 
-`proto/binary_transfer.proto` es espejo de
-`apps/nodeservice/priv/protos/binary_transfer.proto`. Si el contrato cambia en
-el servidor, copiar el `.proto` actualizado aquí y recompilar.
+`proto/binary_transfer.proto` y `proto/node_manager.proto` son espejos de
+`apps/nodeservice/priv/protos/*.proto`. Si un contrato cambia en el servidor,
+copiar el `.proto` actualizado aquí y recompilar (`cargo build --release`).
