@@ -166,6 +166,15 @@ enum NodeCmd {
         #[command(flatten)]
         grpc: GrpcOpts,
     },
+    /// Mezcla data JSON en el data del nodo (Datamerge, :datamerge_m)
+    Datamerge {
+        id: String,
+        /// JSON a mezclar, ej: '{"estado":"procesado"}'
+        #[arg(long)]
+        data: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
 }
 
 #[tokio::main]
@@ -259,6 +268,13 @@ async fn main() -> Result<()> {
                 let req = nodemanager::UserRequest { username, password: String::new() };
                 let mut c = nm_client(&grpc).await?;
                 print_monadic(c.user(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::Datamerge { id, data, grpc } => {
+                serde_json::from_str::<serde_json::Value>(&data)
+                    .context("--data no es JSON valido")?;
+                let req = nodemanager::DatamergeRequest { unique_id: id, data_json: data };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.datamerge(with_key(req, &grpc)?).await?.into_inner())?;
             }
         },
 

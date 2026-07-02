@@ -94,6 +94,9 @@ alberto node children <UNIQUE_ID> --secondary
 
 # usuario por username (User; password siempre enmascarada)
 alberto node user soportevn
+
+# mezclar data JSON en el nodo (Datamerge, :datamerge_m)
+alberto node datamerge <UNIQUE_ID> --data '{"estado":"procesado"}'
 ```
 
 ### Descarga de contenido
