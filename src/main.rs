@@ -125,6 +125,16 @@ enum NodeCmd {
         #[command(flatten)]
         grpc: GrpcOpts,
     },
+    /// Obtiene varios nodos por sus unique_ids (Ids); --type filtra por tipo
+    Ids {
+        /// Lista de unique_ids separados por espacio
+        #[arg(required = true, num_args = 1..)]
+        ids: Vec<String>,
+        #[arg(long = "type", default_value = "")]
+        node_type: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
     /// Lista nodos por tipo dentro de un tenant (ByType)
     ByType {
         #[arg(long = "type")]
@@ -224,6 +234,11 @@ async fn main() -> Result<()> {
                 let req = nodemanager::UniqueIdRequest { unique_id: id };
                 let mut c = nm_client(&grpc).await?;
                 print_monadic(c.node_get(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::Ids { ids, node_type, grpc } => {
+                let req = nodemanager::IdsRequest { ids, r#type: node_type };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.ids(with_key(req, &grpc)?).await?.into_inner())?;
             }
             NodeCmd::ByType { node_type, tenant, grpc } => {
                 let req = nodemanager::HomeRequest { tenant, r#type: node_type };

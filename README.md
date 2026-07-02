@@ -77,6 +77,10 @@ Toda respuesta es **monádica**: `{:ok, valor}` → JSON en stdout, exit 0;
 # nodo por unique_id (NodeGet)
 alberto node get <UNIQUE_ID>
 
+# varios nodos por sus unique_ids en una sola llamada (Ids); --type filtra
+alberto node ids <ID1> <ID2> <ID3>
+alberto node ids <ID1> <ID2> --type factura
+
 # nodo por path (ByPath): absoluto o relativo a un tenant
 alberto node by-path /tenants/totalcheck/documentlibrary
 alberto node by-path /documentlibrary/factura --tenant totalcheck
