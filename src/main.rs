@@ -100,20 +100,14 @@ enum Cmd {
         #[command(subcommand)]
         cmd: AdminCmd,
     },
-    /// Descarga el contenido binario de un nodo
+    /// Descarga el contenido binario de un nodo (gRPC NodeContent)
     Download {
-        /// unique_id del nodo
+        /// unique_id del nodo (único en todo el repositorio)
         id: String,
-        #[arg(long)]
-        tenant: String,
-        /// Archivo de salida (default: nombre del nodo o <id>.bin)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-        #[arg(long, env = "ALBERTO_REST_URL", default_value = "http://127.0.0.1:3537")]
-        rest_url: String,
-        /// API key (header x-api-key)
-        #[arg(long, env = "ALBERTO_API_KEY")]
-        api_key: String,
+        /// Ruta de destino (default: <unique_id>.bin)
+        dest: Option<PathBuf>,
+        #[command(flatten)]
+        grpc: GrpcOpts,
     },
 }
 
@@ -227,15 +221,6 @@ enum NodeCmd {
     /// Busca nodos por nombre (NodeByName, :nodebyname)
     ByName {
         name: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Descarga el contenido binario por gRPC (NodeContent, :nodecontent_m)
-    Content {
-        id: String,
-        /// Archivo de salida (default: <unique_id>.bin)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
         #[command(flatten)]
         grpc: GrpcOpts,
     },
@@ -504,18 +489,6 @@ async fn main() -> Result<()> {
                 let mut c = nm_client(&grpc).await?;
                 print_monadic(c.node_by_name(with_key(req, &grpc)?).await?.into_inner())?;
             }
-            NodeCmd::Content { id, output, grpc } => {
-                let out = output.unwrap_or_else(|| PathBuf::from(format!("{id}.bin")));
-                let req = nodemanager::UniqueIdRequest { unique_id: id };
-                let mut c = nm_client(&grpc).await?;
-                let reply = c.node_content(with_key(req, &grpc)?).await?.into_inner();
-                if reply.ok {
-                    tokio::fs::write(&out, &reply.content).await?;
-                    eprintln!("descargado: {} ({} bytes)", out.display(), reply.content.len());
-                } else {
-                    bail!("{{:error, {}}}", reply.error);
-                }
-            }
             NodeCmd::Create { parent, node_type, data, grpc } => {
                 serde_json::from_str::<serde_json::Value>(&data)
                     .context("--data no es JSON valido")?;
@@ -624,21 +597,17 @@ async fn main() -> Result<()> {
             }
         },
 
-        Cmd::Download { id, tenant, output, rest_url, api_key } => {
-            let url = format!("{rest_url}/nodeservice/download/tenant/{tenant}/node/{id}");
-            let resp = reqwest::Client::new()
-                .get(&url)
-                .header("x-api-key", &api_key)
-                .send()
-                .await
-                .context("fallo la peticion REST")?;
-            if !resp.status().is_success() {
-                bail!("HTTP {}: {}", resp.status(), resp.text().await.unwrap_or_default());
+        Cmd::Download { id, dest, grpc } => {
+            let out = dest.unwrap_or_else(|| PathBuf::from(format!("{id}.bin")));
+            let req = nodemanager::UniqueIdRequest { unique_id: id };
+            let mut c = nm_client(&grpc).await?;
+            let reply = c.node_content(with_key(req, &grpc)?).await?.into_inner();
+            if reply.ok {
+                tokio::fs::write(&out, &reply.content).await?;
+                eprintln!("descargado: {} ({} bytes)", out.display(), reply.content.len());
+            } else {
+                bail!("{{:error, {}}}", reply.error);
             }
-            let out = output.unwrap_or_else(|| PathBuf::from(format!("{id}.bin")));
-            let bytes = resp.bytes().await?;
-            tokio::fs::write(&out, &bytes).await?;
-            eprintln!("descargado: {} ({} bytes)", out.display(), bytes.len());
         }
     }
 
@@ -760,7 +729,10 @@ async fn nm_client(
         .await
         .context("no se pudo conectar al endpoint gRPC")?;
 
-    Ok(NodeManagerServiceClient::new(channel))
+    // NodeContent devuelve el binario completo en un mensaje: subir el límite
+    // de decode (default tonic: 4 MB) para archivos grandes.
+    Ok(NodeManagerServiceClient::new(channel)
+        .max_decoding_message_size(1024 * 1024 * 1024))
 }
 
 fn with_key<T>(req: T, grpc: &GrpcOpts) -> Result<tonic::Request<T>> {
@@ -786,25 +758,3 @@ fn print_monadic(reply: nodemanager::MonadicReply) -> Result<()> {
     }
 }
 
-// --- REST helpers ------------------------------------------------------------
-
-async fn rest_json(url: &str, api_key: &str) -> Result<()> {
-    let resp = reqwest::Client::new()
-        .get(url)
-        .header("x-api-key", api_key)
-        .send()
-        .await
-        .context("fallo la peticion REST")?;
-    let status = resp.status();
-    let body = resp.text().await?;
-
-    match serde_json::from_str::<serde_json::Value>(&body) {
-        Ok(v) => println!("{}", serde_json::to_string_pretty(&v)?),
-        Err(_) => println!("{body}"),
-    }
-
-    if !status.is_success() {
-        bail!("HTTP {status}");
-    }
-    Ok(())
-}

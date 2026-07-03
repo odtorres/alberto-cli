@@ -7,7 +7,7 @@ CLI en Rust para **NodeService**, 100% sobre los servicios gRPC nuevos:
 
 - **`upload`** → `transfer.BinaryTransferService` (streaming con backpressure)
 - **`node *`** → `nodemanager.NodeManagerService` (operaciones de nodos, respuesta monádica)
-- **`download`** → REST público (descarga de contenido)
+- **`download`** → gRPC `NodeContent` (descarga de contenido)
 
 > Los endpoints HTTP viejos de upload quedan **excluidos** de este cliente por
 > diseño: la única vía de subida es gRPC.
@@ -33,11 +33,9 @@ Se pasa con `--api-key` o env `ALBERTO_API_KEY`.
 | Env | Default | Descripción |
 |---|---|---|
 | `ALBERTO_GRPC_ENDPOINT` | `http://127.0.0.1:9090` | Endpoint gRPC |
-| `ALBERTO_REST_URL` | `http://127.0.0.1:3537` | Base REST de nodeservice |
 | `ALBERTO_API_KEY` | — | API key (obligatoria) |
 
-Los defaults asumen `kubectl port-forward svc/nodeservice-service 9090:9090`
-(y `3537:3537` para los comandos REST).
+El default asume `kubectl port-forward svc/nodeservice-service 9090:9090`.
 
 ## Uso
 
@@ -105,7 +103,9 @@ alberto node datamerge <UNIQUE_ID> --data '{"estado":"procesado"}'
 ### Descarga de contenido
 
 ```bash
-alberto download <UNIQUE_ID> --tenant totalcheck -o salida.pdf
+# gRPC NodeContent; el destino es posicional (default: <unique_id>.bin).
+# No requiere tenant: el unique_id es único en todo el repositorio.
+alberto download <UNIQUE_ID> salida.pdf
 ```
 
 ## Salida y códigos de error
