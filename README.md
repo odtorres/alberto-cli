@@ -8,6 +8,7 @@ CLI en Rust para **NodeService**, 100% sobre los servicios gRPC nuevos:
 - **`upload`** → `transfer.BinaryTransferService` (streaming con backpressure)
 - **`node *`** → `nodemanager.NodeManagerService` (operaciones de nodos, respuesta monádica)
 - **`download`** → gRPC `NodeContent` (descarga de contenido)
+- **`tui`** → navegador interactivo con **preview de PDFs en la terminal** 🖼️
 
 > Los endpoints HTTP viejos de upload quedan **excluidos** de este cliente por
 > diseño: la única vía de subida es gRPC.
@@ -99,6 +100,17 @@ alberto node user soportevn
 # mezclar data JSON en el nodo (Datamerge, :datamerge_m)
 alberto node datamerge <UNIQUE_ID> --data '{"estado":"procesado"}'
 ```
+
+### TUI — navegador interactivo
+
+```bash
+alberto tui --tenant totalcheck
+```
+
+Navega el document library (↑↓/Enter/Backspace), muestra el detalle JSON del
+nodo y **previsualiza PDFs directamente en la terminal** (Enter o `p` sobre un
+📄; ←→ cambia de página, `d` descarga, Esc/q cierra). Requiere `pdftoppm`
+(paquete `poppler`/`poppler-utils`) y terminal truecolor.
 
 ### Descarga de contenido
 

@@ -17,6 +17,8 @@ use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use tokio::io::AsyncReadExt;
 
+mod tui;
+
 pub mod transfer {
     tonic::include_proto!("transfer");
 }
@@ -99,6 +101,14 @@ enum Cmd {
     Admin {
         #[command(subcommand)]
         cmd: AdminCmd,
+    },
+    /// Navegador interactivo (TUI) con preview de PDFs en la terminal
+    Tui {
+        /// Tenant cuyo document library se navega
+        #[arg(long)]
+        tenant: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
     },
     /// Descarga el contenido binario de un nodo (gRPC NodeContent)
     Download {
@@ -596,6 +606,10 @@ async fn main() -> Result<()> {
                 print_monadic(c.doc_libs_types(with_key(req, &grpc)?).await?.into_inner())?;
             }
         },
+
+        Cmd::Tui { tenant, grpc } => {
+            tui::run(tenant, grpc)?;
+        }
 
         Cmd::Download { id, dest, grpc } => {
             let out = dest.unwrap_or_else(|| PathBuf::from(format!("{id}.bin")));
