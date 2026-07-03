@@ -90,6 +90,16 @@ enum Cmd {
         #[command(subcommand)]
         cmd: NodeCmd,
     },
+    /// Operaciones de tenant vía gRPC NodeManagerService
+    Tenant {
+        #[command(subcommand)]
+        cmd: TenantCmd,
+    },
+    /// Operaciones administrativas (folders, grupos, índices)
+    Admin {
+        #[command(subcommand)]
+        cmd: AdminCmd,
+    },
     /// Descarga el contenido binario de un nodo
     Download {
         /// unique_id del nodo
@@ -172,6 +182,193 @@ enum NodeCmd {
         /// JSON a mezclar, ej: '{"estado":"procesado"}'
         #[arg(long)]
         data: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Merge estricto de data (DataUpdate, :dataupdate)
+    DataUpdate {
+        id: String,
+        #[arg(long)]
+        data: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Merge masivo de data en varios nodos (BulkDatamerge, :bulk_datamerge_m)
+    BulkDatamerge {
+        /// JSON con la colección de cambios
+        #[arg(long)]
+        changes: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Actualiza un valor dentro del data de un nodo ubicado por path (Patch, :patch_m)
+    Patch {
+        /// Path del nodo, ej /tenants/t/documentlibrary/x
+        envelope_path: String,
+        /// Ruta dentro del data (claves separadas)
+        #[arg(long, required = true, num_args = 1..)]
+        path: Vec<String>,
+        /// Valor JSON a colocar
+        #[arg(long)]
+        data: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Lee un nodo por path, opcionalmente un valor interno del data (Get, :get_m)
+    GetIn {
+        /// Path del nodo
+        node_path: String,
+        /// Ruta interna del data (vacío = nodo completo)
+        #[arg(long, num_args = 0..)]
+        path: Vec<String>,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Busca nodos por nombre (NodeByName, :nodebyname)
+    ByName {
+        name: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Descarga el contenido binario por gRPC (NodeContent, :nodecontent_m)
+    Content {
+        id: String,
+        /// Archivo de salida (default: <unique_id>.bin)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Crea un nodo hijo sin contenido (NodeCreate, :node_m)
+    Create {
+        #[arg(long)]
+        parent: String,
+        #[arg(long = "type")]
+        node_type: String,
+        /// JSON del data; DEBE incluir "name"
+        #[arg(long)]
+        data: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Agrega un secondary parent (AddSecondaryParent, :addsecundaryparent)
+    AddSecondary {
+        child_id: String,
+        parent_id: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Quita un secondary parent (RemoveSecondaryParent, :removesecundaryparent)
+    RemoveSecondary {
+        child_id: String,
+        parent_id: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+}
+
+#[derive(Subcommand)]
+enum TenantCmd {
+    /// Obtiene el nodo del tenant (TenantGet, :tenant)
+    Get {
+        tenant: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Crea un tenant (TenantCreate, :tenant)
+    Create {
+        tenant: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "")]
+        description: String,
+        #[arg(long)]
+        dni: String,
+        #[arg(long)]
+        company: String,
+        #[arg(long)]
+        email: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Document library del tenant (DocLib, :doc_lib)
+    Doclib {
+        tenant: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Home de un tipo documental (Home, :home)
+    Home {
+        tenant: String,
+        #[arg(long = "type")]
+        node_type: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Package/home clasificado de un tipo (Package, :package_m)
+    Package {
+        tenant: String,
+        #[arg(long = "type")]
+        node_type: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+}
+
+#[derive(Subcommand)]
+enum AdminCmd {
+    /// Crea un folder bajo un nodo (Folder, :folder)
+    Folder {
+        #[arg(long)]
+        parent: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "")]
+        description: String,
+        #[arg(long, default_value = "{}")]
+        data: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Crea el grupo default con nombre (DefaultGroup, :default_group)
+    DefaultGroup {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        parent: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Grupo colaborador default del tenant (:default_colaborator_group)
+    ColaboratorGroup {
+        #[arg(long)]
+        parent: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Grupo consumidor default del tenant (:default_consumer_group)
+    ConsumerGroup {
+        #[arg(long)]
+        parent: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Grupo administrador default del tenant (:default_administrator_group)
+    AdministratorGroup {
+        #[arg(long)]
+        parent: String,
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Índices configurados en etcd (Indexs, :indexs)
+    Indexs {
+        #[command(flatten)]
+        grpc: GrpcOpts,
+    },
+    /// Tipos documentales del document library (DocLibsTypes, :doc_libs_types)
+    DoclibTypes {
         #[command(flatten)]
         grpc: GrpcOpts,
     },
@@ -275,6 +472,155 @@ async fn main() -> Result<()> {
                 let req = nodemanager::DatamergeRequest { unique_id: id, data_json: data };
                 let mut c = nm_client(&grpc).await?;
                 print_monadic(c.datamerge(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::DataUpdate { id, data, grpc } => {
+                serde_json::from_str::<serde_json::Value>(&data)
+                    .context("--data no es JSON valido")?;
+                let req = nodemanager::DataUpdateRequest { unique_id: id, data_json: data };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.data_update(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::BulkDatamerge { changes, grpc } => {
+                serde_json::from_str::<serde_json::Value>(&changes)
+                    .context("--changes no es JSON valido")?;
+                let req = nodemanager::BulkDatamergeRequest { changes_json: changes };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.bulk_datamerge(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::Patch { envelope_path, path, data, grpc } => {
+                serde_json::from_str::<serde_json::Value>(&data)
+                    .context("--data no es JSON valido")?;
+                let req = nodemanager::PatchRequest { envelope_path, path, data_json: data };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.patch(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::GetIn { node_path, path, grpc } => {
+                let req = nodemanager::GetRequest { node_path, path };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.get(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::ByName { name, grpc } => {
+                let req = nodemanager::NameRequest { name };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.node_by_name(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::Content { id, output, grpc } => {
+                let out = output.unwrap_or_else(|| PathBuf::from(format!("{id}.bin")));
+                let req = nodemanager::UniqueIdRequest { unique_id: id };
+                let mut c = nm_client(&grpc).await?;
+                let reply = c.node_content(with_key(req, &grpc)?).await?.into_inner();
+                if reply.ok {
+                    tokio::fs::write(&out, &reply.content).await?;
+                    eprintln!("descargado: {} ({} bytes)", out.display(), reply.content.len());
+                } else {
+                    bail!("{{:error, {}}}", reply.error);
+                }
+            }
+            NodeCmd::Create { parent, node_type, data, grpc } => {
+                serde_json::from_str::<serde_json::Value>(&data)
+                    .context("--data no es JSON valido")?;
+                let req = nodemanager::NodeCreateRequest {
+                    parent_id: parent,
+                    data_json: data,
+                    r#type: node_type,
+                };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.node_create(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::AddSecondary { child_id, parent_id, grpc } => {
+                let req = nodemanager::SecondaryParentRequest { child_id, parent_id };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.add_secondary_parent(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            NodeCmd::RemoveSecondary { child_id, parent_id, grpc } => {
+                let req = nodemanager::SecondaryParentRequest { child_id, parent_id };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.remove_secondary_parent(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+        },
+
+        Cmd::Tenant { cmd } => match cmd {
+            TenantCmd::Get { tenant, grpc } => {
+                let req = nodemanager::TenantGetRequest { tenant };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.tenant_get(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            TenantCmd::Create { tenant, title, description, dni, company, email, grpc } => {
+                let req = nodemanager::TenantCreateRequest {
+                    tenant,
+                    title,
+                    description,
+                    dni,
+                    company_name: company,
+                    email,
+                };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.tenant_create(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            TenantCmd::Doclib { tenant, grpc } => {
+                let req = nodemanager::TenantRequest { tenant };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.doc_lib(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            TenantCmd::Home { tenant, node_type, grpc } => {
+                let req = nodemanager::HomeRequest { tenant, r#type: node_type };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.home(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            TenantCmd::Package { tenant, node_type, grpc } => {
+                let req = nodemanager::PackageRequest { tenant, r#type: node_type };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.package(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+        },
+
+        Cmd::Admin { cmd } => match cmd {
+            AdminCmd::Folder { parent, name, title, description, data, grpc } => {
+                serde_json::from_str::<serde_json::Value>(&data)
+                    .context("--data no es JSON valido")?;
+                let req = nodemanager::FolderRequest {
+                    parent_id: parent,
+                    data_json: data,
+                    name,
+                    title,
+                    description,
+                };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.folder(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            AdminCmd::DefaultGroup { name, parent, grpc } => {
+                let req = nodemanager::DefaultGroupRequest { name, parent_id: parent };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.default_group(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            AdminCmd::ColaboratorGroup { parent, grpc } => {
+                let req = nodemanager::ParentRequest { parent_id: parent };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(
+                    c.default_colaborator_group(with_key(req, &grpc)?).await?.into_inner(),
+                )?;
+            }
+            AdminCmd::ConsumerGroup { parent, grpc } => {
+                let req = nodemanager::ParentRequest { parent_id: parent };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.default_consumer_group(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            AdminCmd::AdministratorGroup { parent, grpc } => {
+                let req = nodemanager::ParentRequest { parent_id: parent };
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(
+                    c.default_administrator_group(with_key(req, &grpc)?).await?.into_inner(),
+                )?;
+            }
+            AdminCmd::Indexs { grpc } => {
+                let req = nodemanager::EmptyRequest {};
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.indexs(with_key(req, &grpc)?).await?.into_inner())?;
+            }
+            AdminCmd::DoclibTypes { grpc } => {
+                let req = nodemanager::EmptyRequest {};
+                let mut c = nm_client(&grpc).await?;
+                print_monadic(c.doc_libs_types(with_key(req, &grpc)?).await?.into_inner())?;
             }
         },
 
