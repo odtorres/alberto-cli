@@ -15,5 +15,10 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Config { cmd } => commands::config_cmd::run(cmd),
         Cmd::Tui { tenant, grpc } => tui::run(tenant, grpc),
         Cmd::Download { id, dest, grpc } => commands::download::run(id, dest, grpc).await,
+        Cmd::Completions { shell } => {
+            let mut cmd = <Cli as clap::CommandFactory>::command();
+            clap_complete::generate(shell, &mut cmd, "alberto", &mut std::io::stdout());
+            Ok(())
+        }
     }
 }

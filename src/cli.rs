@@ -68,6 +68,12 @@ pub enum Cmd {
         #[command(flatten)]
         grpc: GrpcOpts,
     },
+    /// Genera autocompletado para tu shell (agrega a tu rc)
+    Completions {
+        /// Shell destino
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
 }
 
 /// Argumentos de `alberto upload` (variantes plain/assoc/signed).

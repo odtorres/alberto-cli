@@ -498,3 +498,13 @@ fn config_show_enmascara_api_key() {
         .success()
         .stdout(contains("supe…").and(contains("supersecreta").not()));
 }
+
+#[test]
+fn completions_zsh() {
+    Command::cargo_bin("alberto")
+        .unwrap()
+        .args(["completions", "zsh"])
+        .assert()
+        .success()
+        .stdout(contains("#compdef alberto"));
+}
