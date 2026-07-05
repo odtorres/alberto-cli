@@ -21,6 +21,8 @@ pub async fn run(a: UploadArgs) -> Result<()> {
     }
     valid_json(&a.data, "--data")?;
 
+    let conn = a.grpc.resolve()?;
+
     let filename = a
         .file
         .file_name()
@@ -53,7 +55,7 @@ pub async fn run(a: UploadArgs) -> Result<()> {
         client_ref: uuid::Uuid::new_v4().to_string(),
     };
 
-    upload_with_retries(&a.endpoint, &a.file, meta, &a.api_key, a.retries).await
+    upload_with_retries(&conn.endpoint, &a.file, meta, &conn.api_key, a.retries).await
 }
 
 // --- upload gRPC -------------------------------------------------------------

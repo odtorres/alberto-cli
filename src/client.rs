@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use crate::cli::GrpcOpts;
+use crate::cli::{Conn, GrpcOpts};
 
 pub mod transfer {
     #![allow(clippy::large_enum_variant)]
@@ -19,8 +19,9 @@ use nodemanager::node_manager_service_client::NodeManagerServiceClient;
 
 pub async fn nm_client(
     grpc: &GrpcOpts,
-) -> Result<NodeManagerServiceClient<tonic::transport::Channel>> {
-    let channel = tonic::transport::Channel::from_shared(grpc.endpoint.clone())
+) -> Result<(NodeManagerServiceClient<tonic::transport::Channel>, Conn)> {
+    let conn = grpc.resolve()?;
+    let channel = tonic::transport::Channel::from_shared(conn.endpoint.clone())
         .context("endpoint invalido (usa http://host:puerto)")?
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
@@ -30,7 +31,10 @@ pub async fn nm_client(
 
     // NodeContent devuelve el binario completo en un mensaje: subir el límite
     // de decode (default tonic: 4 MB) para archivos grandes.
-    Ok(NodeManagerServiceClient::new(channel).max_decoding_message_size(1024 * 1024 * 1024))
+    Ok((
+        NodeManagerServiceClient::new(channel).max_decoding_message_size(1024 * 1024 * 1024),
+        conn,
+    ))
 }
 
 pub fn with_key<T>(req: T, api_key: &str) -> Result<tonic::Request<T>> {
@@ -53,8 +57,8 @@ where
         Output = std::result::Result<tonic::Response<nodemanager::MonadicReply>, tonic::Status>,
     >,
 {
-    let client = nm_client(grpc).await?;
-    let reply = call(client, with_key(req, &grpc.api_key)?)
+    let (client, conn) = nm_client(grpc).await?;
+    let reply = call(client, with_key(req, &conn.api_key)?)
         .await?
         .into_inner();
     print_monadic(reply)

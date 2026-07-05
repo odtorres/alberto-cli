@@ -84,33 +84,43 @@ pub struct UploadArgs {
     /// unique_id del contenido firmado a referenciar (activa variante signed)
     #[arg(long)]
     pub signed_ref: Option<String>,
-    /// Endpoint gRPC
-    #[arg(
-        long,
-        env = "ALBERTO_GRPC_ENDPOINT",
-        default_value = "http://127.0.0.1:9090"
-    )]
-    pub endpoint: String,
-    /// API key (header x-api-key, igual que la capa HTTP)
-    #[arg(long, env = "ALBERTO_API_KEY")]
-    pub api_key: String,
+    #[command(flatten)]
+    pub grpc: GrpcOpts,
     /// Intentos totales ante fallas de red/timeout (la idempotencia evita duplicados)
     #[arg(long, default_value_t = 3)]
     pub retries: u32,
 }
 
-#[derive(clap::Args)]
-pub struct GrpcOpts {
-    /// Endpoint gRPC
-    #[arg(
-        long,
-        env = "ALBERTO_GRPC_ENDPOINT",
-        default_value = "http://127.0.0.1:9090"
-    )]
+/// Conexión ya resuelta (flags/env/perfil combinados).
+pub struct Conn {
     pub endpoint: String,
+    pub api_key: String,
+}
+
+#[derive(clap::Args, Clone)]
+pub struct GrpcOpts {
+    /// Endpoint gRPC (default: el del perfil, o http://127.0.0.1:9090)
+    #[arg(long, env = "ALBERTO_GRPC_ENDPOINT")]
+    pub endpoint: Option<String>,
     /// API key (metadata x-api-key)
     #[arg(long, env = "ALBERTO_API_KEY")]
-    pub api_key: String,
+    pub api_key: Option<String>,
+    /// Perfil de ~/.config/alberto/config.toml
+    #[arg(long, env = "ALBERTO_PROFILE")]
+    pub profile: Option<String>,
+}
+
+impl GrpcOpts {
+    pub fn resolve(&self) -> anyhow::Result<Conn> {
+        let cfg = crate::config::load()?;
+        let (endpoint, api_key) = crate::config::resolve(
+            &cfg,
+            self.profile.as_deref(),
+            self.endpoint.clone(),
+            self.api_key.clone(),
+        )?;
+        Ok(Conn { endpoint, api_key })
+    }
 }
 
 #[derive(Subcommand)]

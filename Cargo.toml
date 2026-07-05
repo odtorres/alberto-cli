@@ -28,6 +28,9 @@ indicatif = "0.17"
 ratatui = "0.29"
 image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "6"
 
 [build-dependencies]
 tonic-build = "0.12"

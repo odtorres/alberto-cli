@@ -68,8 +68,8 @@ struct App {
 // ---------------------------------------------------------------------------
 
 pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
-    let mut client = block_on(nm_client(&grpc))?;
-    let api_key = grpc.api_key.clone();
+    let (mut client, conn) = block_on(nm_client(&grpc))?;
+    let api_key = conn.api_key;
 
     // nivel raíz: hijos del document library del tenant
     let doclib = block_on(fetch_doclib(&mut client, &api_key, &tenant))?;
