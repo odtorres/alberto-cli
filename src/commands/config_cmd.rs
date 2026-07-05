@@ -63,9 +63,22 @@ pub fn run(cmd: ConfigCmd) -> Result<()> {
 fn mask(key: &str) -> String {
     if key.is_empty() {
         "(sin definir)".into()
-    } else if key.len() <= 4 {
+    } else if key.chars().count() <= 4 {
         "…".into()
     } else {
-        format!("{}…", &key[..4])
+        format!("{}…", key.chars().take(4).collect::<String>())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mask_no_paniquea_con_utf8() {
+        assert_eq!(mask(""), "(sin definir)");
+        assert_eq!(mask("abcd"), "…");
+        assert_eq!(mask("ññññññ"), "ññññ…");
+        assert_eq!(mask("supersecreta"), "supe…");
     }
 }
