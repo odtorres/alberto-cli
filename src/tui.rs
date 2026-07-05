@@ -72,7 +72,9 @@ pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
         grpc,
         levels: vec![level(format!("doclib {tenant}"), nodes)],
         preview: None,
-        status: "↑↓ mover · Enter entrar/preview · Backspace subir · p preview · d descargar · q salir".into(),
+        status:
+            "↑↓ mover · Enter entrar/preview · Backspace subir · p preview · d descargar · q salir"
+                .into(),
     };
 
     enable_raw_mode()?;
@@ -93,17 +95,18 @@ fn level(title: String, nodes: Vec<Value>) -> Level {
     if !nodes.is_empty() {
         state.select(Some(0));
     }
-    Level { title, nodes, state }
+    Level {
+        title,
+        nodes,
+        state,
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Loop principal
 // ---------------------------------------------------------------------------
 
-fn event_loop(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut App,
-) -> Result<()> {
+fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     loop {
         terminal.draw(|f| draw(f, app))?;
 
@@ -160,7 +163,9 @@ fn move_sel(app: &mut App, delta: i32) {
 }
 
 fn enter(app: &mut App) {
-    let Some(node) = current(app).cloned() else { return };
+    let Some(node) = current(app).cloned() else {
+        return;
+    };
     let has_content = node["content"].as_bool().unwrap_or(false);
 
     if has_content {
@@ -190,7 +195,9 @@ fn refresh(app: &mut App) {
 // ---------------------------------------------------------------------------
 
 fn open_preview(app: &mut App) {
-    let Some(node) = current(app).cloned() else { return };
+    let Some(node) = current(app).cloned() else {
+        return;
+    };
 
     if !node["content"].as_bool().unwrap_or(false) {
         app.status = "el nodo no tiene contenido".into();
@@ -203,8 +210,10 @@ fn open_preview(app: &mut App) {
 
     match block_on(fetch_content(&app.grpc, &id)).and_then(|bytes| build_preview(&name, bytes)) {
         Ok(p) => {
-            app.status =
-                format!("{name} — página 1/{} · ←→ páginas · Esc cerrar", p.total_pages);
+            app.status = format!(
+                "{name} — página 1/{} · ←→ páginas · Esc cerrar",
+                p.total_pages
+            );
             app.preview = Some(p);
         }
         Err(e) => app.status = format!("preview: {e:#}"),
@@ -234,7 +243,9 @@ fn build_preview(name: &str, bytes: Vec<u8>) -> Result<Preview> {
 }
 
 fn change_page(app: &mut App, delta: i32) {
-    let Some(p) = app.preview.as_mut() else { return };
+    let Some(p) = app.preview.as_mut() else {
+        return;
+    };
     let next = p.page as i32 + delta;
     if next < 1 || next > p.total_pages as i32 {
         return;
@@ -266,7 +277,15 @@ fn pdf_pages(pdf: &Path) -> Option<usize> {
 fn render_page(pdf: &Path, page: usize, dir: &Path) -> Result<RgbaImage> {
     let prefix = dir.join("page");
     let status = Command::new("pdftoppm")
-        .args(["-png", "-r", "110", "-f", &page.to_string(), "-l", &page.to_string()])
+        .args([
+            "-png",
+            "-r",
+            "110",
+            "-f",
+            &page.to_string(),
+            "-l",
+            &page.to_string(),
+        ])
         .arg(pdf)
         .arg(&prefix)
         .status()
@@ -282,7 +301,9 @@ fn render_page(pdf: &Path, page: usize, dir: &Path) -> Result<RgbaImage> {
         .find(|p| p.extension().is_some_and(|x| x == "png"))
         .context("pdftoppm no generó la imagen")?;
 
-    let img = image::open(&png).context("no se pudo leer el PNG")?.to_rgba8();
+    let img = image::open(&png)
+        .context("no se pudo leer el PNG")?
+        .to_rgba8();
     let _ = std::fs::remove_file(&png);
     Ok(img)
 }
@@ -337,8 +358,17 @@ fn draw_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .collect();
 
     let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(format!(" {breadcrumb} ")))
-        .highlight_style(Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!(" {breadcrumb} ")),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::Cyan)
+                .fg(Color::Black)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("▶ ");
 
     f.render_stateful_widget(list, area, &mut lvl.state);
@@ -358,9 +388,10 @@ fn draw_detail(f: &mut ratatui::Frame, app: &App, area: Rect) {
 
 fn draw_preview(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let p = app.preview.as_ref().unwrap();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title(format!(" 📄 {} — pág {}/{} ", p.name, p.page, p.total_pages));
+    let block = Block::default().borders(Borders::ALL).title(format!(
+        " 📄 {} — pág {}/{} ",
+        p.name, p.page, p.total_pages
+    ));
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(HalfblockImage(&p.img), inner);
@@ -393,7 +424,11 @@ impl Widget for HalfblockImage<'_> {
             for cx in 0..rw {
                 let top = img.get_pixel(cx, cy * 2);
                 let bot_y = cy * 2 + 1;
-                let bot = if bot_y < rh { *img.get_pixel(cx, bot_y) } else { *top };
+                let bot = if bot_y < rh {
+                    *img.get_pixel(cx, bot_y)
+                } else {
+                    *top
+                };
 
                 let (sx, sy) = (x0 + cx as u16, area.y + cy as u16);
                 if sx >= area.x + area.width || sy >= area.y + area.height {
@@ -426,8 +461,14 @@ fn parse_list(json: &str) -> Result<Vec<Value>> {
 }
 
 async fn fetch_doclib(grpc: &GrpcOpts, tenant: &str) -> Result<Value> {
-    let req = nodemanager::TenantRequest { tenant: tenant.to_string() };
-    let reply = nm_client(grpc).await?.doc_lib(with_key(req, grpc)?).await?.into_inner();
+    let req = nodemanager::TenantRequest {
+        tenant: tenant.to_string(),
+    };
+    let reply = nm_client(grpc)
+        .await?
+        .doc_lib(with_key(req, grpc)?)
+        .await?
+        .into_inner();
     if !reply.ok {
         bail!("doclib de '{tenant}': {}", reply.error);
     }
@@ -439,7 +480,11 @@ async fn fetch_children(grpc: &GrpcOpts, unique_id: &str) -> Result<Vec<Value>> 
         unique_id: unique_id.to_string(),
         secondary: false,
     };
-    let reply = nm_client(grpc).await?.node_child(with_key(req, grpc)?).await?.into_inner();
+    let reply = nm_client(grpc)
+        .await?
+        .node_child(with_key(req, grpc)?)
+        .await?
+        .into_inner();
     if !reply.ok {
         bail!("{}", reply.error);
     }
@@ -447,8 +492,14 @@ async fn fetch_children(grpc: &GrpcOpts, unique_id: &str) -> Result<Vec<Value>> 
 }
 
 async fn fetch_content(grpc: &GrpcOpts, unique_id: &str) -> Result<Vec<u8>> {
-    let req = nodemanager::UniqueIdRequest { unique_id: unique_id.to_string() };
-    let reply = nm_client(grpc).await?.node_content(with_key(req, grpc)?).await?.into_inner();
+    let req = nodemanager::UniqueIdRequest {
+        unique_id: unique_id.to_string(),
+    };
+    let reply = nm_client(grpc)
+        .await?
+        .node_content(with_key(req, grpc)?)
+        .await?
+        .into_inner();
     if !reply.ok {
         bail!("{}", reply.error);
     }
@@ -456,7 +507,9 @@ async fn fetch_content(grpc: &GrpcOpts, unique_id: &str) -> Result<Vec<u8>> {
 }
 
 fn download_selected(app: &mut App) {
-    let Some(node) = current(app).cloned() else { return };
+    let Some(node) = current(app).cloned() else {
+        return;
+    };
 
     if !node["content"].as_bool().unwrap_or(false) {
         app.status = "el nodo no tiene contenido".into();
