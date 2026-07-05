@@ -1,0 +1,15 @@
+name: alberto-cli
+arch: amd64
+platform: linux
+version: ${SEMVER}
+maintainer: Oscar Daniel Torres Hernández <odtorres891118@gmail.com>
+description: >-
+  CLI para NodeService: upload por gRPC streaming, operaciones de nodos y
+  TUI con preview de PDFs en la terminal.
+homepage: https://github.com/odtorres/alberto-cli
+license: MIT OR Apache-2.0
+recommends:
+  - poppler-utils
+contents:
+  - src: ./alberto
+    dst: /usr/bin/alberto
