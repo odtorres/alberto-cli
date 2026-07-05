@@ -3,9 +3,19 @@ name: Linux packages
 on:
   release:
     types: [published]
+  # dist crea el release con GITHUB_TOKEN, que NO dispara otros workflows:
+  # este dispatch manual permite empaquetar un tag ya publicado.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag del release (ej v0.2.0)"
+        required: true
 
 permissions:
   contents: write
+
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
   nfpm:
@@ -16,7 +26,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "${{ github.event.release.tag_name }}" \
+          gh release download "$TAG" \
             --pattern '*x86_64-unknown-linux-gnu.tar.*' --output linux.tar.xz
           tar -xf linux.tar.xz --strip-components=1
       - name: Install nfpm
@@ -27,7 +37,7 @@ jobs:
           sudo dpkg -i nfpm.deb
       - name: Package deb + rpm
         env:
-          SEMVER: ${{ github.event.release.tag_name }}
+          SEMVER: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           export SEMVER="${SEMVER#v}"
           envsubst '${SEMVER}' < nfpm.yaml > nfpm-resolved.yaml
@@ -36,4 +46,4 @@ jobs:
       - name: Upload to release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ github.event.release.tag_name }}" ./*.deb ./*.rpm
+        run: gh release upload "$TAG" ./*.deb ./*.rpm
