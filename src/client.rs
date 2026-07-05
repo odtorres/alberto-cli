@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
-use crate::cli::{Conn, GrpcOpts};
+use crate::cli::{Conn, GrpcOpts, Output};
+use serde_json::Value;
 
 pub mod transfer {
     #![allow(clippy::large_enum_variant)]
@@ -48,6 +49,65 @@ pub fn with_key<T>(req: T, api_key: &str) -> Result<tonic::Request<T>> {
     Ok(request)
 }
 
+pub fn format_result(result_json: &str, mode: Output) -> String {
+    match mode {
+        Output::Raw => result_json.to_string(),
+        Output::Json => serde_json::from_str::<Value>(result_json)
+            .map(|v| v.to_string())
+            .unwrap_or_else(|_| result_json.to_string()),
+        Output::Pretty => serde_json::from_str::<Value>(result_json)
+            .and_then(|v| serde_json::to_string_pretty(&v))
+            .unwrap_or_else(|_| result_json.to_string()),
+        Output::Table => format_table(result_json),
+    }
+}
+
+const TABLE_COLS: [&str; 4] = ["unique_id", "name", "type", "content"];
+
+fn format_table(result_json: &str) -> String {
+    let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(result_json) else {
+        return format_result(result_json, Output::Pretty);
+    };
+
+    let cell = |row: &Value, col: &str| match &row[col] {
+        Value::Null => String::new(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+
+    let mut widths: Vec<usize> = TABLE_COLS.iter().map(|c| c.len()).collect();
+    let table: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            TABLE_COLS
+                .iter()
+                .enumerate()
+                .map(|(i, col)| {
+                    let v = cell(row, col);
+                    widths[i] = widths[i].max(v.len());
+                    v
+                })
+                .collect()
+        })
+        .collect();
+
+    let fmt_row = |cells: &[String], widths: &[usize]| -> String {
+        cells
+            .iter()
+            .zip(widths.iter().copied())
+            .map(|(c, w)| format!("{c:<w$}"))
+            .collect::<Vec<_>>()
+            .join("  ")
+            .trim_end()
+            .to_string()
+    };
+
+    let header: Vec<String> = TABLE_COLS.iter().map(|s| s.to_string()).collect();
+    let mut out = vec![fmt_row(&header, &widths)];
+    out.extend(table.iter().map(|r| fmt_row(r, &widths)));
+    out.join("\n")
+}
+
 /// Ejecuta una RPC monádica: conecta, autentica, llama e imprime.
 /// Colapsa el patrón repetido en los ~28 handlers.
 pub async fn nm_call<T, F, Fut>(grpc: &GrpcOpts, req: T, call: F) -> Result<()>
@@ -61,19 +121,48 @@ where
     let reply = call(client, with_key(req, &conn.api_key)?)
         .await?
         .into_inner();
-    print_monadic(reply)
+    print_monadic(reply, grpc.output)
 }
 
 /// Imprime la respuesta monádica: ok=true -> result_json a stdout;
 /// ok=false -> error a stderr y exit != 0 ({:error, _}).
-pub fn print_monadic(reply: nodemanager::MonadicReply) -> Result<()> {
+pub fn print_monadic(reply: nodemanager::MonadicReply, mode: Output) -> Result<()> {
     if reply.ok {
-        match serde_json::from_str::<serde_json::Value>(&reply.result_json) {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v)?),
-            Err(_) => println!("{}", reply.result_json),
-        }
+        println!("{}", format_result(&reply.result_json, mode));
         Ok(())
     } else {
         bail!("{{:error, {}}}", reply.error);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn raw_pasa_tal_cual() {
+        assert_eq!(format_result("{\"a\": 1}", Output::Raw), "{\"a\": 1}");
+    }
+
+    #[test]
+    fn json_compacta() {
+        assert_eq!(format_result("{ \"a\" : 1 }", Output::Json), "{\"a\":1}");
+    }
+
+    #[test]
+    fn table_lista_columnas() {
+        let json = r#"[{"unique_id":"u1","name":"a.pdf","type":"factura","content":true},
+                       {"unique_id":"u2","name":"b","type":"folder","content":false}]"#;
+        let t = format_result(json, Output::Table);
+        let lines: Vec<&str> = t.lines().collect();
+        assert!(lines[0].contains("unique_id") && lines[0].contains("name"));
+        assert!(lines[1].contains("u1") && lines[1].contains("a.pdf"));
+        assert!(lines[2].contains("u2"));
+    }
+
+    #[test]
+    fn table_no_lista_cae_a_pretty() {
+        let t = format_result("{\"a\":1}", Output::Table);
+        assert!(t.contains("\"a\": 1"));
     }
 }

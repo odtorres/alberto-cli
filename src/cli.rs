@@ -3,6 +3,19 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+/// Formato de salida para respuestas monádicas.
+#[derive(clap::ValueEnum, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Output {
+    /// JSON indentado (default)
+    Pretty,
+    /// JSON compacto en una línea (para pipes)
+    Json,
+    /// result_json tal cual llegó del servidor
+    Raw,
+    /// Tabla (solo para resultados que son listas)
+    Table,
+}
+
 #[derive(Parser)]
 #[command(
     name = "alberto",
@@ -113,6 +126,9 @@ pub struct GrpcOpts {
     /// Perfil de ~/.config/alberto/config.toml
     #[arg(long, env = "ALBERTO_PROFILE")]
     pub profile: Option<String>,
+    /// Formato de salida
+    #[arg(long, value_enum, default_value_t = Output::Pretty)]
+    pub output: Output,
 }
 
 impl GrpcOpts {

@@ -288,6 +288,28 @@ async fn node_get_happy() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn node_get_output_raw() {
+    let addr = spawn_mock().await;
+    alberto()
+        .args([
+            "node",
+            "get",
+            "abc",
+            "--endpoint",
+            &format!("http://{addr}"),
+            "--api-key",
+            KEY,
+            "--output",
+            "raw",
+        ])
+        .assert()
+        .success()
+        .stdout(contains(
+            r#"{"unique_id":"abc","name":"doc.pdf","content":true}"#,
+        ));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn node_user_business_error() {
     let addr = spawn_mock().await;
     alberto()
