@@ -41,6 +41,7 @@ use crate::client::{nm_client, nodemanager, with_key};
 
 struct Level {
     title: String,
+    parent_id: String,
     nodes: Vec<Value>,
     state: ListState,
 }
@@ -78,10 +79,10 @@ pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
     let mut app = App {
         client,
         api_key,
-        levels: vec![level(format!("doclib {tenant}"), nodes)],
+        levels: vec![level(format!("doclib {tenant}"), doclib_id.clone(), nodes)],
         preview: None,
         status:
-            "↑↓ mover · Enter entrar/preview · Backspace subir · p preview · d descargar · q salir"
+            "↑↓ mover · Enter entrar/preview · Backspace subir · p preview · d descargar · r refrescar · q salir"
                 .into(),
     };
 
@@ -98,13 +99,14 @@ pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
     result
 }
 
-fn level(title: String, nodes: Vec<Value>) -> Level {
+fn level(title: String, parent_id: String, nodes: Vec<Value>) -> Level {
     let mut state = ListState::default();
     if !nodes.is_empty() {
         state.select(Some(0));
     }
     Level {
         title,
+        parent_id,
         nodes,
         state,
     }
@@ -188,14 +190,32 @@ fn enter(app: &mut App) {
         Ok(nodes) if nodes.is_empty() => app.status = format!("{name}: sin hijos"),
         Ok(nodes) => {
             app.status = format!("{name}: {} hijos", nodes.len());
-            app.levels.push(level(name, nodes));
+            app.levels.push(level(name, id, nodes));
         }
         Err(e) => app.status = format!("error: {e:#}"),
     }
 }
 
 fn refresh(app: &mut App) {
-    app.status = "refresh: vuelve a entrar al nivel (Backspace + Enter)".into();
+    let Some(parent_id) = app.levels.last().map(|l| l.parent_id.clone()) else {
+        return;
+    };
+    let fetched = block_on(fetch_children(&mut app.client, &app.api_key, &parent_id));
+    let lvl = app.levels.last_mut().unwrap();
+    match fetched {
+        Ok(nodes) => {
+            let sel = lvl
+                .state
+                .selected()
+                .unwrap_or(0)
+                .min(nodes.len().saturating_sub(1));
+            lvl.state
+                .select(if nodes.is_empty() { None } else { Some(sel) });
+            app.status = format!("refrescado: {} elementos", nodes.len());
+            lvl.nodes = nodes;
+        }
+        Err(e) => app.status = format!("refresh: {e:#}"),
+    }
 }
 
 // ---------------------------------------------------------------------------
