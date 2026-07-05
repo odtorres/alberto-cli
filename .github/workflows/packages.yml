@@ -27,7 +27,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release download "$TAG" \
-            --pattern '*x86_64-unknown-linux-gnu.tar.*' --output linux.tar.xz
+            --pattern '*x86_64-unknown-linux-gnu.tar.xz' --output linux.tar.xz
           tar -xf linux.tar.xz --strip-components=1
       - name: Install nfpm
         env:
