@@ -29,8 +29,10 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Widget, Wrap};
 use ratatui::Terminal;
 use serde_json::Value;
+use tonic::transport::Channel;
 
 use crate::cli::GrpcOpts;
+use crate::client::nodemanager::node_manager_service_client::NodeManagerServiceClient;
 use crate::client::{nm_client, nodemanager, with_key};
 
 // ---------------------------------------------------------------------------
@@ -53,7 +55,8 @@ struct Preview {
 }
 
 struct App {
-    grpc: GrpcOpts,
+    client: NodeManagerServiceClient<Channel>,
+    api_key: String,
     levels: Vec<Level>,
     preview: Option<Preview>,
     status: String,
@@ -64,13 +67,17 @@ struct App {
 // ---------------------------------------------------------------------------
 
 pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
+    let mut client = block_on(nm_client(&grpc))?;
+    let api_key = grpc.api_key.clone();
+
     // nivel raíz: hijos del document library del tenant
-    let doclib = block_on(fetch_doclib(&grpc, &tenant))?;
+    let doclib = block_on(fetch_doclib(&mut client, &api_key, &tenant))?;
     let doclib_id = doclib["unique_id"].as_str().unwrap_or_default().to_string();
-    let nodes = block_on(fetch_children(&grpc, &doclib_id))?;
+    let nodes = block_on(fetch_children(&mut client, &api_key, &doclib_id))?;
 
     let mut app = App {
-        grpc,
+        client,
+        api_key,
         levels: vec![level(format!("doclib {tenant}"), nodes)],
         preview: None,
         status:
@@ -177,7 +184,7 @@ fn enter(app: &mut App) {
     let id = node["unique_id"].as_str().unwrap_or_default().to_string();
     let name = node["name"].as_str().unwrap_or("?").to_string();
 
-    match block_on(fetch_children(&app.grpc, &id)) {
+    match block_on(fetch_children(&mut app.client, &app.api_key, &id)) {
         Ok(nodes) if nodes.is_empty() => app.status = format!("{name}: sin hijos"),
         Ok(nodes) => {
             app.status = format!("{name}: {} hijos", nodes.len());
@@ -209,7 +216,9 @@ fn open_preview(app: &mut App) {
     let name = node["name"].as_str().unwrap_or("documento").to_string();
     app.status = format!("descargando {name}...");
 
-    match block_on(fetch_content(&app.grpc, &id)).and_then(|bytes| build_preview(&name, bytes)) {
+    match block_on(fetch_content(&mut app.client, &app.api_key, &id))
+        .and_then(|bytes| build_preview(&name, bytes))
+    {
         Ok(p) => {
             app.status = format!(
                 "{name} — página 1/{} · ←→ páginas · Esc cerrar",
@@ -461,46 +470,46 @@ fn parse_list(json: &str) -> Result<Vec<Value>> {
     }
 }
 
-async fn fetch_doclib(grpc: &GrpcOpts, tenant: &str) -> Result<Value> {
+async fn fetch_doclib(
+    c: &mut NodeManagerServiceClient<Channel>,
+    api_key: &str,
+    tenant: &str,
+) -> Result<Value> {
     let req = nodemanager::TenantRequest {
         tenant: tenant.to_string(),
     };
-    let reply = nm_client(grpc)
-        .await?
-        .doc_lib(with_key(req, &grpc.api_key)?)
-        .await?
-        .into_inner();
+    let reply = c.doc_lib(with_key(req, api_key)?).await?.into_inner();
     if !reply.ok {
         bail!("doclib de '{tenant}': {}", reply.error);
     }
     Ok(serde_json::from_str(&reply.result_json)?)
 }
 
-async fn fetch_children(grpc: &GrpcOpts, unique_id: &str) -> Result<Vec<Value>> {
+async fn fetch_children(
+    c: &mut NodeManagerServiceClient<Channel>,
+    api_key: &str,
+    unique_id: &str,
+) -> Result<Vec<Value>> {
     let req = nodemanager::NodeChildRequest {
         unique_id: unique_id.to_string(),
         secondary: false,
     };
-    let reply = nm_client(grpc)
-        .await?
-        .node_child(with_key(req, &grpc.api_key)?)
-        .await?
-        .into_inner();
+    let reply = c.node_child(with_key(req, api_key)?).await?.into_inner();
     if !reply.ok {
         bail!("{}", reply.error);
     }
     parse_list(&reply.result_json)
 }
 
-async fn fetch_content(grpc: &GrpcOpts, unique_id: &str) -> Result<Vec<u8>> {
+async fn fetch_content(
+    c: &mut NodeManagerServiceClient<Channel>,
+    api_key: &str,
+    unique_id: &str,
+) -> Result<Vec<u8>> {
     let req = nodemanager::UniqueIdRequest {
         unique_id: unique_id.to_string(),
     };
-    let reply = nm_client(grpc)
-        .await?
-        .node_content(with_key(req, &grpc.api_key)?)
-        .await?
-        .into_inner();
+    let reply = c.node_content(with_key(req, api_key)?).await?.into_inner();
     if !reply.ok {
         bail!("{}", reply.error);
     }
@@ -520,7 +529,7 @@ fn download_selected(app: &mut App) {
     let id = node["unique_id"].as_str().unwrap_or_default().to_string();
     let name = node["name"].as_str().unwrap_or("descarga.bin").to_string();
 
-    match block_on(fetch_content(&app.grpc, &id)) {
+    match block_on(fetch_content(&mut app.client, &app.api_key, &id)) {
         Ok(bytes) => {
             let size = bytes.len();
             match std::fs::write(&name, bytes) {
