@@ -44,6 +44,22 @@ pub fn with_key<T>(req: T, api_key: &str) -> Result<tonic::Request<T>> {
     Ok(request)
 }
 
+/// Ejecuta una RPC monádica: conecta, autentica, llama e imprime.
+/// Colapsa el patrón repetido en los ~28 handlers.
+pub async fn nm_call<T, F, Fut>(grpc: &GrpcOpts, req: T, call: F) -> Result<()>
+where
+    F: FnOnce(NodeManagerServiceClient<tonic::transport::Channel>, tonic::Request<T>) -> Fut,
+    Fut: std::future::Future<
+        Output = std::result::Result<tonic::Response<nodemanager::MonadicReply>, tonic::Status>,
+    >,
+{
+    let client = nm_client(grpc).await?;
+    let reply = call(client, with_key(req, &grpc.api_key)?)
+        .await?
+        .into_inner();
+    print_monadic(reply)
+}
+
 /// Imprime la respuesta monádica: ok=true -> result_json a stdout;
 /// ok=false -> error a stderr y exit != 0 ({:error, _}).
 pub fn print_monadic(reply: nodemanager::MonadicReply) -> Result<()> {
