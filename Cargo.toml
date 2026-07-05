@@ -5,6 +5,7 @@ edition = "2021"
 description = "CLI para NodeService: upload por gRPC streaming (backpressure), operaciones de nodos y TUI con preview de PDFs"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/odtorres/alberto-cli"
+homepage = "https://github.com/odtorres/alberto-cli"
 readme = "README.md"
 keywords = ["cli", "grpc", "tui", "document-management"]
 categories = ["command-line-utilities"]
@@ -45,3 +46,8 @@ tokio-stream = { version = "0.1", features = ["net"] }
 [profile.release]
 strip = true
 lto = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
