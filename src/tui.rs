@@ -538,7 +538,9 @@ mod tests {
 
     #[test]
     fn preview_de_pdf_real() {
-        let pdf = std::env::var("TEST_PDF").expect("export TEST_PDF=/ruta.pdf");
+        let pdf = std::env::var("TEST_PDF").unwrap_or_else(|_| {
+            concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/one-page.pdf").to_string()
+        });
         let bytes = std::fs::read(pdf).unwrap();
         let p = build_preview("test.pdf", bytes).expect("build_preview");
         assert_eq!(p.total_pages, 1);
