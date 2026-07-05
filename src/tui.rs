@@ -30,7 +30,8 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wid
 use ratatui::Terminal;
 use serde_json::Value;
 
-use crate::{nm_client, nodemanager, with_key, GrpcOpts};
+use crate::cli::GrpcOpts;
+use crate::client::{nm_client, nodemanager, with_key};
 
 // ---------------------------------------------------------------------------
 // Estado
@@ -466,7 +467,7 @@ async fn fetch_doclib(grpc: &GrpcOpts, tenant: &str) -> Result<Value> {
     };
     let reply = nm_client(grpc)
         .await?
-        .doc_lib(with_key(req, grpc)?)
+        .doc_lib(with_key(req, &grpc.api_key)?)
         .await?
         .into_inner();
     if !reply.ok {
@@ -482,7 +483,7 @@ async fn fetch_children(grpc: &GrpcOpts, unique_id: &str) -> Result<Vec<Value>> 
     };
     let reply = nm_client(grpc)
         .await?
-        .node_child(with_key(req, grpc)?)
+        .node_child(with_key(req, &grpc.api_key)?)
         .await?
         .into_inner();
     if !reply.ok {
@@ -497,7 +498,7 @@ async fn fetch_content(grpc: &GrpcOpts, unique_id: &str) -> Result<Vec<u8>> {
     };
     let reply = nm_client(grpc)
         .await?
-        .node_content(with_key(req, grpc)?)
+        .node_content(with_key(req, &grpc.api_key)?)
         .await?
         .into_inner();
     if !reply.ok {

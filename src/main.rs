@@ -13,438 +13,78 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use tokio::io::AsyncReadExt;
 
-mod tui;
+use alberto_cli::cli::{self, Cli};
+use alberto_cli::client::{self, nodemanager, transfer};
+use alberto_cli::tui;
 
-pub mod transfer {
-    #![allow(clippy::large_enum_variant)]
-    tonic::include_proto!("transfer");
-}
-
-pub mod nodemanager {
-    tonic::include_proto!("nodemanager");
-}
-
-use nodemanager::node_manager_service_client::NodeManagerServiceClient;
 use transfer::binary_transfer_service_client::BinaryTransferServiceClient;
 use transfer::{chunk_request::Payload, ChunkRequest, TransferMeta};
 
 const CHUNK_SIZE: usize = 64 * 1024;
-
-#[derive(Parser)]
-#[command(
-    name = "alberto",
-    version,
-    about = "CLI para NodeService: upload por gRPC streaming + operaciones de nodos"
-)]
-struct Cli {
-    #[command(subcommand)]
-    cmd: Cmd,
-}
-
-#[derive(Subcommand)]
-enum Cmd {
-    /// Sube un archivo por gRPC streaming y crea el nodo (variantes plain/assoc/signed)
-    Upload {
-        /// Archivo a subir
-        file: PathBuf,
-        /// Tipo documental del nodo (ej: factura)
-        #[arg(long = "type")]
-        node_type: String,
-        /// Título del nodo (default: nombre del archivo)
-        #[arg(long)]
-        title: Option<String>,
-        /// Descripción
-        #[arg(long, default_value = "")]
-        description: String,
-        /// unique_id del nodo padre (debe existir)
-        #[arg(long)]
-        parent: String,
-        /// Username que sube (debe existir)
-        #[arg(long)]
-        user: String,
-        /// Tenant (informativo; el efectivo se hereda del parent)
-        #[arg(long, default_value = "")]
-        tenant: String,
-        /// Metadata JSON del nodo, ej: '{"rut":"1-9"}'
-        #[arg(long, default_value = "{}")]
-        data: String,
-        /// unique_id a asociar como secondary_parent (activa variante assoc)
-        #[arg(long)]
-        assoc: Option<String>,
-        /// unique_id del contenido firmado a referenciar (activa variante signed)
-        #[arg(long)]
-        signed_ref: Option<String>,
-        /// Endpoint gRPC
-        #[arg(
-            long,
-            env = "ALBERTO_GRPC_ENDPOINT",
-            default_value = "http://127.0.0.1:9090"
-        )]
-        endpoint: String,
-        /// API key (header x-api-key, igual que la capa HTTP)
-        #[arg(long, env = "ALBERTO_API_KEY")]
-        api_key: String,
-        /// Intentos totales ante fallas de red/timeout (la idempotencia evita duplicados)
-        #[arg(long, default_value_t = 3)]
-        retries: u32,
-    },
-    /// Operaciones de nodos vía gRPC NodeManagerService (respuesta monádica)
-    Node {
-        #[command(subcommand)]
-        cmd: NodeCmd,
-    },
-    /// Operaciones de tenant vía gRPC NodeManagerService
-    Tenant {
-        #[command(subcommand)]
-        cmd: TenantCmd,
-    },
-    /// Operaciones administrativas (folders, grupos, índices)
-    Admin {
-        #[command(subcommand)]
-        cmd: AdminCmd,
-    },
-    /// Navegador interactivo (TUI) con preview de PDFs en la terminal
-    Tui {
-        /// Tenant cuyo document library se navega
-        #[arg(long)]
-        tenant: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Descarga el contenido binario de un nodo (gRPC NodeContent)
-    Download {
-        /// unique_id del nodo (único en todo el repositorio)
-        id: String,
-        /// Ruta de destino (default: <unique_id>.bin)
-        dest: Option<PathBuf>,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-}
-
-#[derive(clap::Args)]
-struct GrpcOpts {
-    /// Endpoint gRPC
-    #[arg(
-        long,
-        env = "ALBERTO_GRPC_ENDPOINT",
-        default_value = "http://127.0.0.1:9090"
-    )]
-    endpoint: String,
-    /// API key (metadata x-api-key)
-    #[arg(long, env = "ALBERTO_API_KEY")]
-    api_key: String,
-}
-
-#[derive(Subcommand)]
-enum NodeCmd {
-    /// Obtiene un nodo por unique_id (NodeGet)
-    Get {
-        id: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Obtiene varios nodos por sus unique_ids (Ids); --type filtra por tipo
-    Ids {
-        /// Lista de unique_ids separados por espacio
-        #[arg(required = true, num_args = 1..)]
-        ids: Vec<String>,
-        #[arg(long = "type", default_value = "")]
-        node_type: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Lista nodos por tipo dentro de un tenant (ByType)
-    ByType {
-        #[arg(long = "type")]
-        node_type: String,
-        #[arg(long)]
-        tenant: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Obtiene un nodo por path (ByPath); --tenant opcional para path relativo
-    ByPath {
-        path: String,
-        #[arg(long, default_value = "")]
-        tenant: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Lista los hijos de un nodo (NodeChild); --secondary para secondary_parent
-    Children {
-        id: String,
-        #[arg(long, default_value_t = false)]
-        secondary: bool,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Busca un usuario por username (User; password siempre enmascarada)
-    User {
-        username: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Mezcla data JSON en el data del nodo (Datamerge, :datamerge_m)
-    Datamerge {
-        id: String,
-        /// JSON a mezclar, ej: '{"estado":"procesado"}'
-        #[arg(long)]
-        data: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Merge estricto de data (DataUpdate, :dataupdate)
-    DataUpdate {
-        id: String,
-        #[arg(long)]
-        data: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Merge masivo de data en varios nodos (BulkDatamerge, :bulk_datamerge_m)
-    BulkDatamerge {
-        /// JSON con la colección de cambios
-        #[arg(long)]
-        changes: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Actualiza un valor dentro del data de un nodo ubicado por path (Patch, :patch_m)
-    Patch {
-        /// Path del nodo, ej /tenants/t/documentlibrary/x
-        envelope_path: String,
-        /// Ruta dentro del data (claves separadas)
-        #[arg(long, required = true, num_args = 1..)]
-        path: Vec<String>,
-        /// Valor JSON a colocar
-        #[arg(long)]
-        data: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Lee un nodo por path, opcionalmente un valor interno del data (Get, :get_m)
-    GetIn {
-        /// Path del nodo
-        node_path: String,
-        /// Ruta interna del data (vacío = nodo completo)
-        #[arg(long, num_args = 0..)]
-        path: Vec<String>,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Busca nodos por nombre (NodeByName, :nodebyname)
-    ByName {
-        name: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Crea un nodo hijo sin contenido (NodeCreate, :node_m)
-    Create {
-        #[arg(long)]
-        parent: String,
-        #[arg(long = "type")]
-        node_type: String,
-        /// JSON del data; DEBE incluir "name"
-        #[arg(long)]
-        data: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Agrega un secondary parent (AddSecondaryParent, :addsecundaryparent)
-    AddSecondary {
-        child_id: String,
-        parent_id: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Quita un secondary parent (RemoveSecondaryParent, :removesecundaryparent)
-    RemoveSecondary {
-        child_id: String,
-        parent_id: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-}
-
-#[derive(Subcommand)]
-enum TenantCmd {
-    /// Obtiene el nodo del tenant (TenantGet, :tenant)
-    Get {
-        tenant: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Crea un tenant (TenantCreate, :tenant)
-    Create {
-        tenant: String,
-        #[arg(long)]
-        title: String,
-        #[arg(long, default_value = "")]
-        description: String,
-        #[arg(long)]
-        dni: String,
-        #[arg(long)]
-        company: String,
-        #[arg(long)]
-        email: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Document library del tenant (DocLib, :doc_lib)
-    Doclib {
-        tenant: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Home de un tipo documental (Home, :home)
-    Home {
-        tenant: String,
-        #[arg(long = "type")]
-        node_type: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Package/home clasificado de un tipo (Package, :package_m)
-    Package {
-        tenant: String,
-        #[arg(long = "type")]
-        node_type: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-}
-
-#[derive(Subcommand)]
-enum AdminCmd {
-    /// Crea un folder bajo un nodo (Folder, :folder)
-    Folder {
-        #[arg(long)]
-        parent: String,
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        title: String,
-        #[arg(long, default_value = "")]
-        description: String,
-        #[arg(long, default_value = "{}")]
-        data: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Crea el grupo default con nombre (DefaultGroup, :default_group)
-    DefaultGroup {
-        #[arg(long)]
-        name: String,
-        #[arg(long)]
-        parent: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Grupo colaborador default del tenant (:default_colaborator_group)
-    ColaboratorGroup {
-        #[arg(long)]
-        parent: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Grupo consumidor default del tenant (:default_consumer_group)
-    ConsumerGroup {
-        #[arg(long)]
-        parent: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Grupo administrador default del tenant (:default_administrator_group)
-    AdministratorGroup {
-        #[arg(long)]
-        parent: String,
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Índices configurados en etcd (Indexs, :indexs)
-    Indexs {
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-    /// Tipos documentales del document library (DocLibsTypes, :doc_libs_types)
-    DoclibTypes {
-        #[command(flatten)]
-        grpc: GrpcOpts,
-    },
-}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
-        Cmd::Upload {
-            file,
-            node_type,
-            title,
-            description,
-            parent,
-            user,
-            tenant,
-            data,
-            assoc,
-            signed_ref,
-            endpoint,
-            api_key,
-            retries,
-        } => {
-            if assoc.is_some() && signed_ref.is_some() {
+        cli::Cmd::Upload(a) => {
+            if a.assoc.is_some() && a.signed_ref.is_some() {
                 bail!("--assoc y --signed-ref son mutuamente excluyentes");
             }
             // validar JSON de --data antes de enviar
-            serde_json::from_str::<serde_json::Value>(&data).context("--data no es JSON valido")?;
+            serde_json::from_str::<serde_json::Value>(&a.data)
+                .context("--data no es JSON valido")?;
 
-            let filename = file
+            let filename = a
+                .file
                 .file_name()
                 .context("ruta de archivo invalida")?
                 .to_string_lossy()
                 .to_string();
 
-            let variant = if assoc.is_some() {
+            let variant = if a.assoc.is_some() {
                 "assoc"
-            } else if signed_ref.is_some() {
+            } else if a.signed_ref.is_some() {
                 "signed"
             } else {
                 "plain"
             };
 
             let meta = TransferMeta {
-                tenant,
-                r#type: node_type,
-                title: title.unwrap_or_else(|| filename.clone()),
-                description,
+                tenant: a.tenant,
+                r#type: a.node_type,
+                title: a.title.unwrap_or_else(|| filename.clone()),
+                description: a.description,
                 filename,
-                parent_id: parent,
-                username: user,
-                data_json: data,
+                parent_id: a.parent,
+                username: a.user,
+                data_json: a.data,
                 variant: variant.into(),
-                assoc_id: assoc.unwrap_or_default(),
-                ref_signed_id: signed_ref.unwrap_or_default(),
+                assoc_id: a.assoc.unwrap_or_default(),
+                ref_signed_id: a.signed_ref.unwrap_or_default(),
                 // Idempotencia: UNA clave por invocación, compartida por todos
                 // los reintentos — un retry jamás duplica el documento.
                 client_ref: uuid::Uuid::new_v4().to_string(),
             };
 
-            upload_with_retries(&endpoint, &file, meta, &api_key, retries).await?;
+            upload_with_retries(&a.endpoint, &a.file, meta, &a.api_key, a.retries).await?;
         }
 
-        Cmd::Node { cmd } => match cmd {
-            NodeCmd::Get { id, grpc } => {
+        cli::Cmd::Node { cmd } => match cmd {
+            cli::NodeCmd::Get { id, grpc } => {
                 let req = nodemanager::UniqueIdRequest { unique_id: id };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.node_get(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.node_get(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::Ids {
+            cli::NodeCmd::Ids {
                 ids,
                 node_type,
                 grpc,
@@ -453,10 +93,14 @@ async fn main() -> Result<()> {
                     ids,
                     r#type: node_type,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.ids(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.ids(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::ByType {
+            cli::NodeCmd::ByType {
                 node_type,
                 tenant,
                 grpc,
@@ -465,15 +109,23 @@ async fn main() -> Result<()> {
                     tenant,
                     r#type: node_type,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.by_type(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.by_type(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::ByPath { path, tenant, grpc } => {
+            cli::NodeCmd::ByPath { path, tenant, grpc } => {
                 let req = nodemanager::ByPathRequest { tenant, path };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.by_path(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.by_path(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::Children {
+            cli::NodeCmd::Children {
                 id,
                 secondary,
                 grpc,
@@ -482,47 +134,67 @@ async fn main() -> Result<()> {
                     unique_id: id,
                     secondary,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.node_child(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.node_child(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::User { username, grpc } => {
+            cli::NodeCmd::User { username, grpc } => {
                 let req = nodemanager::UserRequest {
                     username,
                     password: String::new(),
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.user(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.user(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::Datamerge { id, data, grpc } => {
+            cli::NodeCmd::Datamerge { id, data, grpc } => {
                 serde_json::from_str::<serde_json::Value>(&data)
                     .context("--data no es JSON valido")?;
                 let req = nodemanager::DatamergeRequest {
                     unique_id: id,
                     data_json: data,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.datamerge(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.datamerge(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::DataUpdate { id, data, grpc } => {
+            cli::NodeCmd::DataUpdate { id, data, grpc } => {
                 serde_json::from_str::<serde_json::Value>(&data)
                     .context("--data no es JSON valido")?;
                 let req = nodemanager::DataUpdateRequest {
                     unique_id: id,
                     data_json: data,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.data_update(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.data_update(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::BulkDatamerge { changes, grpc } => {
+            cli::NodeCmd::BulkDatamerge { changes, grpc } => {
                 serde_json::from_str::<serde_json::Value>(&changes)
                     .context("--changes no es JSON valido")?;
                 let req = nodemanager::BulkDatamergeRequest {
                     changes_json: changes,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.bulk_datamerge(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.bulk_datamerge(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::Patch {
+            cli::NodeCmd::Patch {
                 envelope_path,
                 path,
                 data,
@@ -535,24 +207,36 @@ async fn main() -> Result<()> {
                     path,
                     data_json: data,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.patch(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.patch(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::GetIn {
+            cli::NodeCmd::GetIn {
                 node_path,
                 path,
                 grpc,
             } => {
                 let req = nodemanager::GetRequest { node_path, path };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.get(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.get(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::ByName { name, grpc } => {
+            cli::NodeCmd::ByName { name, grpc } => {
                 let req = nodemanager::NameRequest { name };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.node_by_name(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.node_by_name(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            NodeCmd::Create {
+            cli::NodeCmd::Create {
                 parent,
                 node_type,
                 data,
@@ -565,26 +249,14 @@ async fn main() -> Result<()> {
                     data_json: data,
                     r#type: node_type,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.node_create(with_key(req, &grpc)?).await?.into_inner())?;
-            }
-            NodeCmd::AddSecondary {
-                child_id,
-                parent_id,
-                grpc,
-            } => {
-                let req = nodemanager::SecondaryParentRequest {
-                    child_id,
-                    parent_id,
-                };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(
-                    c.add_secondary_parent(with_key(req, &grpc)?)
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.node_create(client::with_key(req, &grpc.api_key)?)
                         .await?
                         .into_inner(),
                 )?;
             }
-            NodeCmd::RemoveSecondary {
+            cli::NodeCmd::AddSecondary {
                 child_id,
                 parent_id,
                 grpc,
@@ -593,22 +265,42 @@ async fn main() -> Result<()> {
                     child_id,
                     parent_id,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(
-                    c.remove_secondary_parent(with_key(req, &grpc)?)
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.add_secondary_parent(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
+            }
+            cli::NodeCmd::RemoveSecondary {
+                child_id,
+                parent_id,
+                grpc,
+            } => {
+                let req = nodemanager::SecondaryParentRequest {
+                    child_id,
+                    parent_id,
+                };
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.remove_secondary_parent(client::with_key(req, &grpc.api_key)?)
                         .await?
                         .into_inner(),
                 )?;
             }
         },
 
-        Cmd::Tenant { cmd } => match cmd {
-            TenantCmd::Get { tenant, grpc } => {
+        cli::Cmd::Tenant { cmd } => match cmd {
+            cli::TenantCmd::Get { tenant, grpc } => {
                 let req = nodemanager::TenantGetRequest { tenant };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.tenant_get(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.tenant_get(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            TenantCmd::Create {
+            cli::TenantCmd::Create {
                 tenant,
                 title,
                 description,
@@ -625,15 +317,23 @@ async fn main() -> Result<()> {
                     company_name: company,
                     email,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.tenant_create(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.tenant_create(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            TenantCmd::Doclib { tenant, grpc } => {
+            cli::TenantCmd::Doclib { tenant, grpc } => {
                 let req = nodemanager::TenantRequest { tenant };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.doc_lib(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.doc_lib(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            TenantCmd::Home {
+            cli::TenantCmd::Home {
                 tenant,
                 node_type,
                 grpc,
@@ -642,10 +342,14 @@ async fn main() -> Result<()> {
                     tenant,
                     r#type: node_type,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.home(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.home(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            TenantCmd::Package {
+            cli::TenantCmd::Package {
                 tenant,
                 node_type,
                 grpc,
@@ -654,13 +358,17 @@ async fn main() -> Result<()> {
                     tenant,
                     r#type: node_type,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.package(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.package(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
         },
 
-        Cmd::Admin { cmd } => match cmd {
-            AdminCmd::Folder {
+        cli::Cmd::Admin { cmd } => match cmd {
+            cli::AdminCmd::Folder {
                 parent,
                 name,
                 title,
@@ -677,65 +385,84 @@ async fn main() -> Result<()> {
                     title,
                     description,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.folder(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.folder(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            AdminCmd::DefaultGroup { name, parent, grpc } => {
+            cli::AdminCmd::DefaultGroup { name, parent, grpc } => {
                 let req = nodemanager::DefaultGroupRequest {
                     name,
                     parent_id: parent,
                 };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.default_group(with_key(req, &grpc)?).await?.into_inner())?;
-            }
-            AdminCmd::ColaboratorGroup { parent, grpc } => {
-                let req = nodemanager::ParentRequest { parent_id: parent };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(
-                    c.default_colaborator_group(with_key(req, &grpc)?)
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.default_group(client::with_key(req, &grpc.api_key)?)
                         .await?
                         .into_inner(),
                 )?;
             }
-            AdminCmd::ConsumerGroup { parent, grpc } => {
+            cli::AdminCmd::ColaboratorGroup { parent, grpc } => {
                 let req = nodemanager::ParentRequest { parent_id: parent };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(
-                    c.default_consumer_group(with_key(req, &grpc)?)
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.default_colaborator_group(client::with_key(req, &grpc.api_key)?)
                         .await?
                         .into_inner(),
                 )?;
             }
-            AdminCmd::AdministratorGroup { parent, grpc } => {
+            cli::AdminCmd::ConsumerGroup { parent, grpc } => {
                 let req = nodemanager::ParentRequest { parent_id: parent };
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(
-                    c.default_administrator_group(with_key(req, &grpc)?)
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.default_consumer_group(client::with_key(req, &grpc.api_key)?)
                         .await?
                         .into_inner(),
                 )?;
             }
-            AdminCmd::Indexs { grpc } => {
+            cli::AdminCmd::AdministratorGroup { parent, grpc } => {
+                let req = nodemanager::ParentRequest { parent_id: parent };
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.default_administrator_group(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
+            }
+            cli::AdminCmd::Indexs { grpc } => {
                 let req = nodemanager::EmptyRequest {};
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.indexs(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.indexs(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
-            AdminCmd::DoclibTypes { grpc } => {
+            cli::AdminCmd::DoclibTypes { grpc } => {
                 let req = nodemanager::EmptyRequest {};
-                let mut c = nm_client(&grpc).await?;
-                print_monadic(c.doc_libs_types(with_key(req, &grpc)?).await?.into_inner())?;
+                let mut c = client::nm_client(&grpc).await?;
+                client::print_monadic(
+                    c.doc_libs_types(client::with_key(req, &grpc.api_key)?)
+                        .await?
+                        .into_inner(),
+                )?;
             }
         },
 
-        Cmd::Tui { tenant, grpc } => {
+        cli::Cmd::Tui { tenant, grpc } => {
             tui::run(tenant, grpc)?;
         }
 
-        Cmd::Download { id, dest, grpc } => {
+        cli::Cmd::Download { id, dest, grpc } => {
             let out = dest.unwrap_or_else(|| PathBuf::from(format!("{id}.bin")));
             let req = nodemanager::UniqueIdRequest { unique_id: id };
-            let mut c = nm_client(&grpc).await?;
-            let reply = c.node_content(with_key(req, &grpc)?).await?.into_inner();
+            let mut c = client::nm_client(&grpc).await?;
+            let reply = c
+                .node_content(client::with_key(req, &grpc.api_key)?)
+                .await?
+                .into_inner();
             if reply.ok {
                 tokio::fs::write(&out, &reply.content).await?;
                 eprintln!(
@@ -854,45 +581,4 @@ async fn upload_once(
     let reply = client.upload(request).await?.into_inner();
     pb.finish_and_clear();
     Ok(reply)
-}
-
-// --- NodeManagerService (gRPC) -----------------------------------------------
-
-async fn nm_client(grpc: &GrpcOpts) -> Result<NodeManagerServiceClient<tonic::transport::Channel>> {
-    let channel = tonic::transport::Channel::from_shared(grpc.endpoint.clone())
-        .context("endpoint invalido (usa http://host:puerto)")?
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(60))
-        .connect()
-        .await
-        .context("no se pudo conectar al endpoint gRPC")?;
-
-    // NodeContent devuelve el binario completo en un mensaje: subir el límite
-    // de decode (default tonic: 4 MB) para archivos grandes.
-    Ok(NodeManagerServiceClient::new(channel).max_decoding_message_size(1024 * 1024 * 1024))
-}
-
-fn with_key<T>(req: T, grpc: &GrpcOpts) -> Result<tonic::Request<T>> {
-    let mut request = tonic::Request::new(req);
-    request.metadata_mut().insert(
-        "x-api-key",
-        grpc.api_key
-            .parse()
-            .context("api key con caracteres invalidos")?,
-    );
-    Ok(request)
-}
-
-/// Imprime la respuesta monádica: ok=true -> result_json a stdout;
-/// ok=false -> error a stderr y exit != 0 ({:error, _}).
-fn print_monadic(reply: nodemanager::MonadicReply) -> Result<()> {
-    if reply.ok {
-        match serde_json::from_str::<serde_json::Value>(&reply.result_json) {
-            Ok(v) => println!("{}", serde_json::to_string_pretty(&v)?),
-            Err(_) => println!("{}", reply.result_json),
-        }
-        Ok(())
-    } else {
-        bail!("{{:error, {}}}", reply.error);
-    }
 }
