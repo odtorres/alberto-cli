@@ -2,7 +2,13 @@
 name = "alberto-cli"
 version = "0.1.0"
 edition = "2021"
-description = "CLI para NodeService: upload por gRPC streaming (backpressure) + operaciones de nodos vía REST"
+description = "CLI para NodeService: upload por gRPC streaming (backpressure), operaciones de nodos y TUI con preview de PDFs"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/odtorres/alberto-cli"
+readme = "README.md"
+keywords = ["cli", "grpc", "tui", "document-management"]
+categories = ["command-line-utilities"]
+include = ["src/**", "proto/**", "build.rs", "README.md", "LICENSE-*"]
 
 [[bin]]
 name = "alberto"
