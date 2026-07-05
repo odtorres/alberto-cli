@@ -536,6 +536,27 @@ async fn fetch_content(
     Ok(reply.content)
 }
 
+/// Nombre seguro para escribir en el directorio actual: sin separadores de
+/// ruta y sin puntos iniciales (nada de ../, rutas absolutas ni ocultos).
+fn sanitize_filename(name: &str) -> String {
+    let cleaned: String = name
+        .chars()
+        .map(|c| {
+            if matches!(c, '/' | '\\' | '\0') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_start_matches('.').trim();
+    if trimmed.is_empty() {
+        "descarga.bin".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn download_selected(app: &mut App) {
     let Some(node) = current(app).cloned() else {
         return;
@@ -547,14 +568,15 @@ fn download_selected(app: &mut App) {
     }
 
     let id = node["unique_id"].as_str().unwrap_or_default().to_string();
-    let name = node["name"].as_str().unwrap_or("descarga.bin").to_string();
+    let name = sanitize_filename(node["name"].as_str().unwrap_or("descarga.bin"));
 
     match block_on(fetch_content(&mut app.client, &app.api_key, &id)) {
         Ok(bytes) => {
             let size = bytes.len();
-            match std::fs::write(&name, bytes) {
-                Ok(()) => app.status = format!("descargado ./{name} ({size} bytes)"),
-                Err(e) => app.status = format!("error escribiendo {name}: {e}"),
+            let dest = std::env::current_dir().unwrap_or_default().join(&name);
+            match std::fs::write(&dest, bytes) {
+                Ok(()) => app.status = format!("descargado {} ({size} bytes)", dest.display()),
+                Err(e) => app.status = format!("error escribiendo {}: {e}", dest.display()),
             }
         }
         Err(e) => app.status = format!("download: {e:#}"),
@@ -580,5 +602,14 @@ mod tests {
     #[test]
     fn rechaza_no_pdf() {
         assert!(build_preview("x.bin", b"no soy pdf".to_vec()).is_err());
+    }
+
+    #[test]
+    fn sanitize_quita_separadores_y_puntos_iniciales() {
+        assert_eq!(sanitize_filename("../../etc/passwd"), "_.._etc_passwd");
+        assert_eq!(sanitize_filename("informe 2026.pdf"), "informe 2026.pdf");
+        assert_eq!(sanitize_filename(""), "descarga.bin");
+        assert_eq!(sanitize_filename("..."), "descarga.bin");
+        assert_eq!(sanitize_filename("a\\b/c"), "a_b_c");
     }
 }
