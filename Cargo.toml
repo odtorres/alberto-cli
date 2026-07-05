@@ -33,6 +33,11 @@ tempfile = "3"
 tonic-build = "0.12"
 protoc-bin-vendored = "3"
 
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tokio-stream = { version = "0.1", features = ["net"] }
+
 [profile.release]
 strip = true
 lto = true
