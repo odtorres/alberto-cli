@@ -342,7 +342,7 @@ async fn bad_api_key_is_unauthenticated() {
         ])
         .assert()
         .failure()
-        .stderr(contains("x-api-key invalida"));
+        .stderr(contains("x-api-key invalida").and(contains("pista:")));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -49,6 +49,35 @@ pub fn with_key<T>(req: T, api_key: &str) -> Result<tonic::Request<T>> {
     Ok(request)
 }
 
+/// Envuelve errores comunes con una pista accionable.
+pub fn friendly(e: anyhow::Error) -> anyhow::Error {
+    match hint_for(&e) {
+        Some(hint) => e.context(hint),
+        None => e,
+    }
+}
+
+fn hint_for(e: &anyhow::Error) -> Option<&'static str> {
+    if let Some(status) = e.downcast_ref::<tonic::Status>() {
+        return match status.code() {
+            tonic::Code::Unauthenticated => {
+                Some("pista: revisa el api key (--api-key, ALBERTO_API_KEY o el perfil)")
+            }
+            tonic::Code::DeadlineExceeded => {
+                Some("pista: el servidor no respondió a tiempo — ¿endpoint correcto?")
+            }
+            _ => None,
+        };
+    }
+    let text = format!("{e:#}");
+    if text.contains("no se pudo conectar") || text.contains("Connection refused") {
+        return Some(
+            "pista: ¿está corriendo el port-forward? (kubectl port-forward svc/nodeservice 9090:9090)",
+        );
+    }
+    None
+}
+
 pub fn format_result(result_json: &str, mode: Output) -> String {
     match mode {
         Output::Raw => result_json.to_string(),
@@ -164,5 +193,19 @@ mod tests {
     fn table_no_lista_cae_a_pretty() {
         let t = format_result("{\"a\":1}", Output::Table);
         assert!(t.contains("\"a\": 1"));
+    }
+
+    #[test]
+    fn hint_para_unauthenticated() {
+        let e = anyhow::Error::new(tonic::Status::unauthenticated("x"));
+        let msg = format!("{:#}", friendly(e));
+        assert!(msg.contains("api key"));
+    }
+
+    #[test]
+    fn hint_para_connection_refused() {
+        let e = anyhow::anyhow!("no se pudo conectar al endpoint gRPC");
+        let msg = format!("{:#}", friendly(e));
+        assert!(msg.contains("port-forward"));
     }
 }
