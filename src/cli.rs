@@ -33,6 +33,11 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: AdminCmd,
     },
+    /// Manejo del archivo de configuración (~/.config/alberto/config.toml)
+    Config {
+        #[command(subcommand)]
+        cmd: ConfigCmd,
+    },
     /// Navegador interactivo (TUI) con preview de PDFs en la terminal
     Tui {
         /// Tenant cuyo document library se navega
@@ -358,5 +363,18 @@ pub enum AdminCmd {
     DoclibTypes {
         #[command(flatten)]
         grpc: GrpcOpts,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCmd {
+    /// Crea un config de ejemplo si no existe
+    Init,
+    /// Lista los perfiles configurados
+    List,
+    /// Muestra los valores efectivos de un perfil (api_key enmascarada)
+    Show {
+        /// Perfil a mostrar (default: default_profile)
+        profile: Option<String>,
     },
 }

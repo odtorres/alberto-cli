@@ -3,6 +3,7 @@
 use std::net::SocketAddr;
 
 use assert_cmd::Command;
+use predicates::prelude::*;
 use predicates::str::contains;
 use tokio::net::TcpListener;
 use tonic::{Request, Response, Status};
@@ -436,4 +437,42 @@ async fn upload_happy() {
         .assert()
         .success()
         .stdout(contains("completed"));
+}
+
+#[test]
+fn config_init_crea_archivo_y_list_lo_muestra() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("config.toml");
+
+    let mut cmd = Command::cargo_bin("alberto").unwrap();
+    cmd.env("ALBERTO_CONFIG", &cfg)
+        .args(["config", "init"])
+        .assert()
+        .success();
+    assert!(cfg.exists());
+
+    let mut cmd = Command::cargo_bin("alberto").unwrap();
+    cmd.env("ALBERTO_CONFIG", &cfg)
+        .args(["config", "list"])
+        .assert()
+        .success()
+        .stdout(contains("local"));
+}
+
+#[test]
+fn config_show_enmascara_api_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("config.toml");
+    std::fs::write(
+        &cfg,
+        "default_profile = \"qa\"\n[profiles.qa]\nendpoint = \"http://qa:1\"\napi_key = \"supersecreta\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("alberto").unwrap();
+    cmd.env("ALBERTO_CONFIG", &cfg)
+        .args(["config", "show"])
+        .assert()
+        .success()
+        .stdout(contains("supe…").and(contains("supersecreta").not()));
 }

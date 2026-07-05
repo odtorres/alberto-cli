@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod config_cmd;
 pub mod download;
 pub mod node;
 pub mod tenant;

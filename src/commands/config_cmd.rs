@@ -1,0 +1,71 @@
+//! `alberto config *` — init/list/show del archivo de perfiles.
+
+use anyhow::{bail, Context, Result};
+
+use crate::cli::ConfigCmd;
+use crate::config::{config_path, load, DEFAULT_ENDPOINT};
+
+const TEMPLATE: &str = r#"default_profile = "local"
+
+[profiles.local]
+endpoint = "http://127.0.0.1:9090"
+api_key = ""
+"#;
+
+pub fn run(cmd: ConfigCmd) -> Result<()> {
+    match cmd {
+        ConfigCmd::Init => {
+            let path = config_path();
+            if path.exists() {
+                bail!("ya existe: {}", path.display());
+            }
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)
+                    .with_context(|| format!("creando {}", dir.display()))?;
+            }
+            std::fs::write(&path, TEMPLATE)
+                .with_context(|| format!("escribiendo {}", path.display()))?;
+            eprintln!("creado: {}", path.display());
+            Ok(())
+        }
+        ConfigCmd::List => {
+            let cfg = load()?;
+            for name in cfg.profiles.keys() {
+                let marker = if cfg.default_profile.as_deref() == Some(name) {
+                    " (default)"
+                } else {
+                    ""
+                };
+                println!("{name}{marker}");
+            }
+            Ok(())
+        }
+        ConfigCmd::Show { profile } => {
+            let cfg = load()?;
+            let name = profile
+                .or(cfg.default_profile.clone())
+                .context("no hay perfil: pasa uno o define default_profile")?;
+            let p = cfg
+                .profiles
+                .get(&name)
+                .with_context(|| format!("perfil '{name}' no existe"))?;
+            println!("perfil:   {name}");
+            println!(
+                "endpoint: {}",
+                p.endpoint.as_deref().unwrap_or(DEFAULT_ENDPOINT)
+            );
+            println!("api_key:  {}", mask(p.api_key.as_deref().unwrap_or("")));
+            Ok(())
+        }
+    }
+}
+
+fn mask(key: &str) -> String {
+    if key.is_empty() {
+        "(sin definir)".into()
+    } else if key.len() <= 4 {
+        "…".into()
+    } else {
+        format!("{}…", &key[..4])
+    }
+}
