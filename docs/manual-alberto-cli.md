@@ -11,13 +11,14 @@
 ### 1. Consigue el binario
 
 ```bash
-git clone git@bitbucket.org:teamdox/umbrella_nodeservice.git
-cd umbrella_nodeservice/clients/alberto-cli
+git clone git@github.com:odtorres/alberto-cli.git
+cd alberto-cli
 cargo build --release
 sudo cp target/release/alberto /usr/local/bin/   # opcional, para tenerlo en el PATH
 ```
 
-> Requisitos: Rust (`rustup.rs`) y `protoc` (`pacman -S protobuf` / `apt install protobuf-compiler`).
+> Requisitos: solo Rust (`rustup.rs`). `protoc` viene vendorizado
+> (`protoc-bin-vendored`), no hace falta instalarlo en el sistema.
 
 ### 2. Configura tu entorno (una vez)
 
@@ -30,7 +31,7 @@ export ALBERTO_GRPC_ENDPOINT="http://127.0.0.1:9090"  # default
 ### 3. Abre el túnel a QA
 
 ```bash
-kubectl port-forward svc/nodeservice-service 9090:9090
+kubectl port-forward svc/nodeservice 9090:9090
 ```
 
 ### 4. ¡Listo! Sube tu primer documento
@@ -243,6 +244,51 @@ Pídele la tuya al administrador (se crean con `POST /internal/tenant/{t}/api-ke
 
 ---
 
+## ⚙️ Perfiles, formatos de salida y autocompletado
+
+### Perfiles de conexión
+
+En vez de exportar `ALBERTO_GRPC_ENDPOINT`/`ALBERTO_API_KEY` a mano, guárdalos
+en `~/.config/alberto/config.toml`:
+
+```bash
+alberto config init            # crea el archivo con un perfil "local" de ejemplo
+alberto config list            # perfiles disponibles (marca el default)
+alberto config show [perfil]   # endpoint + api_key enmascarada
+```
+
+Elige el perfil con `--profile qa` o `ALBERTO_PROFILE=qa`. Precedencia para
+resolver endpoint/api_key:
+
+```
+flag (--endpoint/--api-key) > env (ALBERTO_GRPC_ENDPOINT/ALBERTO_API_KEY)
+  > --profile / ALBERTO_PROFILE > default_profile del archivo
+```
+
+`ALBERTO_CONFIG=/ruta/otro.toml` cambia dónde se busca el archivo (útil en CI
+o para tener un config distinto por proyecto).
+
+### Formatos de salida (`--output`)
+
+| Valor | Qué hace |
+|---|---|
+| `pretty` (default) | JSON indentado, legible |
+| `json` | JSON compacto en una línea — ideal para pipes (`\| jq`) |
+| `raw` | El `result_json` tal cual llegó del servidor |
+| `table` | Tabla, solo cuando el resultado es una lista (ej. `node by-type`) |
+
+```bash
+alberto node by-type --type factura --tenant totalcheck --output table
+```
+
+### Autocompletado de shell
+
+```bash
+alberto completions zsh >> ~/.zshrc     # o bash / fish / elvish / powershell
+```
+
+---
+
 ## 🩺 Troubleshooting
 
 | Síntoma | Causa y solución |
@@ -289,8 +335,8 @@ Detalles completos del protocolo (para integrar otros lenguajes):
 
 | Recurso | Ubicación |
 |---|---|
-| Código del CLI | `clients/alberto-cli/` |
-| README técnico del CLI | `clients/alberto-cli/README.md` |
+| Código del CLI | raíz de este repo (`alberto-cli/`) |
+| README técnico del CLI | `README.md` |
 | Manual de integración gRPC (todos los lenguajes) | `docs/integracion-grpc-streaming-upload.md` |
-| Librería Elixir (para servicios) | `clients/alberto_upload_client/` |
-| Contratos proto | `apps/nodeservice/priv/protos/*.proto` |
+| Librería Elixir (para servicios) | `clients/alberto_upload_client/` (repo `umbrella_nodeservice`) |
+| Contratos proto | `proto/*.proto` (espejo de `apps/nodeservice/priv/protos/*.proto` en `umbrella_nodeservice`) |

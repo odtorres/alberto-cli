@@ -115,6 +115,7 @@ Current state (~1,300 lines):
 
 - Adopt `cargo-dist`: tag `vX.Y.Z` → GitHub Actions builds
   aarch64/x86_64-apple-darwin and x86_64/aarch64-unknown-linux-gnu (+musl)
+  (musl descartado en v0.2.0: solo gnu; pendiente si se necesita)
   binaries, generates the shell installer, updates the Homebrew formula in a
   personal `homebrew-tap` repo, and produces `.deb`/`.rpm`.
 - Publish to crates.io as `alberto-cli`; `cargo install alberto-cli` installs the

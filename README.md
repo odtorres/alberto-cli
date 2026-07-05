@@ -66,12 +66,12 @@ CLI en Rust para **NodeService**, 100% sobre los servicios gRPC nuevos:
 ### Build
 
 ```bash
-cd clients/alberto-cli
 cargo build --release
 # binario: target/release/alberto
 ```
 
-Requiere `protoc` instalado (compila `proto/binary_transfer.proto` en build time).
+`protoc` viene vendorizado (`protoc-bin-vendored`): no hace falta instalarlo en
+el sistema para compilar `proto/binary_transfer.proto`.
 
 ### Autenticación
 
@@ -84,9 +84,11 @@ Se pasa con `--api-key` o env `ALBERTO_API_KEY`.
 | Env | Default | Descripción |
 |---|---|---|
 | `ALBERTO_GRPC_ENDPOINT` | `http://127.0.0.1:9090` | Endpoint gRPC |
-| `ALBERTO_API_KEY` | — | API key (obligatoria) |
+| `ALBERTO_API_KEY` | — | API key, requerida por alguna de las tres vías: flag, env o perfil |
+| `ALBERTO_PROFILE` | — | Perfil a usar de `~/.config/alberto/config.toml` (ver `alberto config`) |
+| `ALBERTO_CONFIG` | `~/.config/alberto/config.toml` | Ruta alterna al archivo de perfiles |
 
-El default asume `kubectl port-forward svc/nodeservice-service 9090:9090`.
+El default asume `kubectl port-forward svc/nodeservice 9090:9090`.
 
 ### Uso
 
