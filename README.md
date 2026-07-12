@@ -37,6 +37,12 @@ PDF preview in the TUI requires poppler (`brew install poppler` /
 alberto config init
 ${EDITOR:-vi} ~/.config/alberto/config.toml   # set endpoint + api_key
 
+# example config (~/.config/alberto/config.toml):
+# [profiles.local]
+# endpoint = "http://127.0.0.1:9090"
+# api_key = "nk_your-key-here"
+# download_dir = "~/Downloads"
+
 # upload a document
 alberto upload factura.pdf --type factura --parent <parent-id> --user oscar
 
@@ -157,12 +163,16 @@ alberto node datamerge <UNIQUE_ID> --data '{"estado":"procesado"}'
 
 ```bash
 alberto tui --tenant totalcheck
+alberto tui --tenant totalcheck --download-dir ~/Descargas
 ```
 
 Navega el document library (↑↓/Enter/Backspace), muestra el detalle JSON del
-nodo y **previsualiza PDFs directamente en la terminal** (Enter o `p` sobre un
-📄; ←→ cambia de página, `d` descarga, Esc/q cierra). Requiere `pdftoppm`
-(paquete `poppler`/`poppler-utils`) y terminal truecolor.
+nodo y **previsualiza PDFs y imágenes (PNG/JPEG) directamente en la terminal**
+(Enter o `p` sobre un 📄; ←→ cambia de página, `d` descarga, Esc/q cierra).
+Filtra con `/` (búsqueda fuzzy case-insensitive), activa auto-refresh cada 5s
+con `a`, y descarga a un directorio personalizado con `--download-dir` (o
+`download_dir` del perfil). Requiere `pdftoppm` (paquete `poppler`/`poppler-utils`)
+y terminal truecolor.
 
 #### Descarga de contenido
 

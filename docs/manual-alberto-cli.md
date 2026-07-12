@@ -140,15 +140,32 @@ Un navegador de dos paneles dentro de tu terminal:
 | `↑` `↓` | Moverse por la lista |
 | `Enter` | Entrar a carpeta 📁 / **preview** de documento 📄 |
 | `Backspace` / `←` | Subir un nivel |
+| `/` | Filtrar (subsecuencia, Esc limpia, Enter aplica) |
+| `a` | Auto-refresh (⟳ cada 5s) |
 | `p` | Preview del seleccionado |
 | `←` `→` | Página anterior / siguiente del PDF |
-| `d` | Descargar el documento al directorio actual |
+| `d` | Descargar el documento |
+| `r` | Refrescar manualmente |
 | `Esc` / `q` | Cerrar preview / salir |
 
 **Requisitos**: `pdftoppm` (`pacman -S poppler` / `apt install poppler-utils` /
 `brew install poppler`) y una terminal con truecolor (prácticamente todas:
 kitty, alacritty, iTerm2, wezterm, gnome-terminal…). El PDF se rasteriza y se
 pinta con半bloques RGB — no necesita protocolos gráficos especiales.
+
+**Filtrado avanzado**: escribe `/` para activar el modo filtro, donde cada carácter
+se busca como una subsecuencia case-insensitive en los nombres (estilo fzf). Por
+ejemplo, `fac` coincide con `Factura_2026`. Puedes editar el filtro con Backspace
+y navegar con ↑↓; presiona Enter para aplicar o Esc para limpiar. El filtro se
+reinicia automáticamente cuando cambias de nivel. La tecla `a` alterna el
+auto-refresh: estando activo, el nivel actual se refresca automáticamente cada
+5 segundos (solo en modo navegación, no en preview). **Preview de imágenes**: además
+de PDFs, el TUI ahora soporta PNG y JPEG — detectados automáticamente por su firma
+de archivo. Las imágenes se muestran como una única "página" sin navegación ←→.
+**Descarga personalizada**: usa `alberto tui --download-dir <ruta>` para elegir
+dónde descargar (`d`). Si omites el flag, se respeta `download_dir` del perfil activo
+en `~/.config/alberto/config.toml` (admite `~/` para home). La precedencia es:
+flag > perfil > directorio actual. Los directorios se crean automáticamente si faltan.
 
 ---
 
