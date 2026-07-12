@@ -262,8 +262,10 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut A
                         if app.levels.len() > 1 {
                             app.levels.pop();
                             if let Some(lvl) = app.levels.last_mut() {
-                                lvl.filter.clear();
-                                reselect(lvl);
+                                if !lvl.filter.is_empty() {
+                                    lvl.filter.clear();
+                                    reselect(lvl);
+                                }
                             }
                         }
                     }
@@ -377,10 +379,14 @@ fn open_preview(app: &mut App) {
         .and_then(|bytes| build_preview(&name, bytes))
     {
         Ok(p) => {
-            app.status = format!(
-                "{name} — página 1/{} · ←→ páginas · Esc cerrar",
-                p.total_pages()
-            );
+            app.status = if p.total_pages() > 1 {
+                format!(
+                    "{name} — página 1/{} · ←→ páginas · Esc cerrar",
+                    p.total_pages()
+                )
+            } else {
+                format!("{name} · Esc cerrar")
+            };
             app.preview = Some(p);
             app.mode = Mode::Preview;
         }
@@ -592,12 +598,12 @@ fn draw_detail(f: &mut ratatui::Frame, app: &App, area: Rect) {
 
 fn draw_preview(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let p = app.preview.as_ref().unwrap();
-    let block = Block::default().borders(Borders::ALL).title(format!(
-        " 📄 {} — pág {}/{} ",
-        p.name,
-        p.page,
-        p.total_pages()
-    ));
+    let title = if p.total_pages() > 1 {
+        format!(" 📄 {} — pág {}/{} ", p.name, p.page, p.total_pages())
+    } else {
+        format!(" 🖼 {} ", p.name)
+    };
+    let block = Block::default().borders(Borders::ALL).title(title);
     let inner = block.inner(area);
     f.render_widget(block, area);
     f.render_widget(HalfblockImage(&p.img), inner);

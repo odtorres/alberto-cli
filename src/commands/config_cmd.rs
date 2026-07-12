@@ -10,6 +10,7 @@ const TEMPLATE: &str = r#"default_profile = "local"
 [profiles.local]
 endpoint = "http://127.0.0.1:9090"
 api_key = ""
+# download_dir = "~/Descargas"
 "#;
 
 pub fn run(cmd: ConfigCmd) -> Result<()> {

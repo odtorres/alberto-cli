@@ -82,6 +82,9 @@ pub fn resolve(
 
 /// Expande "~/" al home del usuario; el resto queda igual.
 pub fn expand_home(path: &str) -> PathBuf {
+    if path == "~" {
+        return dirs::home_dir().unwrap_or_default();
+    }
     if let Some(rest) = path.strip_prefix("~/") {
         return dirs::home_dir().unwrap_or_default().join(rest);
     }
@@ -194,6 +197,7 @@ mod tests {
         assert_eq!(expand_home("~/Descargas"), home.join("Descargas"));
         assert_eq!(expand_home("/abs/x"), PathBuf::from("/abs/x"));
         assert_eq!(expand_home("rel/x"), PathBuf::from("rel/x"));
+        assert_eq!(expand_home("~"), home);
     }
 
     #[test]
