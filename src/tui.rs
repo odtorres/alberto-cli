@@ -97,13 +97,18 @@ struct App {
     mode: Mode,
     auto_refresh: bool,
     last_refresh: Instant,
+    download_dir: PathBuf,
 }
 
 // ---------------------------------------------------------------------------
 // Entrada
 // ---------------------------------------------------------------------------
 
-pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
+pub fn run(tenant: String, download_dir: Option<PathBuf>, grpc: GrpcOpts) -> Result<()> {
+    let cfg = crate::config::load()?;
+    let profile_dir = crate::config::profile_download_dir(&cfg, grpc.profile.as_deref());
+    let download_dir = resolve_download_dir(download_dir, profile_dir.as_deref());
+
     let (mut client, conn) = block_on(nm_client(&grpc))?;
     let api_key = conn.api_key;
 
@@ -123,6 +128,7 @@ pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
         mode: Mode::Browse,
         auto_refresh: false,
         last_refresh: Instant::now(),
+        download_dir,
     };
 
     enable_raw_mode()?;
@@ -136,6 +142,20 @@ pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     result
+}
+
+/// Resuelve el directorio de descargas: flag > download_dir del perfil >
+/// directorio actual. Rutas relativas se anclan al directorio actual.
+fn resolve_download_dir(flag: Option<PathBuf>, profile_dir: Option<&str>) -> PathBuf {
+    let dir = flag.unwrap_or_else(|| match profile_dir {
+        Some(p) => crate::config::expand_home(p),
+        None => std::env::current_dir().unwrap_or_default(),
+    });
+    if dir.is_relative() {
+        std::env::current_dir().unwrap_or_default().join(dir)
+    } else {
+        dir
+    }
 }
 
 fn level(title: String, parent_id: String, nodes: Vec<Value>) -> Level {
@@ -729,7 +749,11 @@ fn download_selected(app: &mut App) {
     match block_on(fetch_content(&mut app.client, &app.api_key, &id)) {
         Ok(bytes) => {
             let size = bytes.len();
-            let dest = std::env::current_dir().unwrap_or_default().join(&name);
+            if let Err(e) = std::fs::create_dir_all(&app.download_dir) {
+                app.status = format!("no se pudo crear {}: {e}", app.download_dir.display());
+                return;
+            }
+            let dest = app.download_dir.join(&name);
             match std::fs::write(&dest, bytes) {
                 Ok(()) => app.status = format!("descargado {} ({size} bytes)", dest.display()),
                 Err(e) => app.status = format!("error escribiendo {}: {e}", dest.display()),
@@ -817,6 +841,21 @@ mod tests {
         assert_eq!(filtered_indices(&lvl), vec![0, 2]);
         lvl.filter.clear();
         assert_eq!(filtered_indices(&lvl), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn resolve_download_dir_precedencia() {
+        let flag = Some(PathBuf::from("/tmp/flagdir"));
+        assert_eq!(
+            resolve_download_dir(flag.clone(), Some("~/perfil")),
+            PathBuf::from("/tmp/flagdir")
+        );
+        assert_eq!(
+            resolve_download_dir(None, Some("/de/perfil")),
+            PathBuf::from("/de/perfil")
+        );
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(resolve_download_dir(None, None), cwd);
     }
 
     #[test]

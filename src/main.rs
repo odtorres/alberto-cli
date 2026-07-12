@@ -21,7 +21,11 @@ async fn run() -> anyhow::Result<()> {
         Cmd::Tenant { cmd } => commands::tenant::run(cmd).await,
         Cmd::Admin { cmd } => commands::admin::run(cmd).await,
         Cmd::Config { cmd } => commands::config_cmd::run(cmd),
-        Cmd::Tui { tenant, grpc } => tui::run(tenant, grpc),
+        Cmd::Tui {
+            tenant,
+            download_dir,
+            grpc,
+        } => tui::run(tenant, download_dir, grpc),
         Cmd::Download { id, dest, grpc } => commands::download::run(id, dest, grpc).await,
         Cmd::Completions { shell } => {
             let mut cmd = <Cli as clap::CommandFactory>::command();

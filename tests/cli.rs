@@ -500,6 +500,24 @@ fn config_show_enmascara_api_key() {
 }
 
 #[test]
+fn config_show_incluye_download_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("config.toml");
+    std::fs::write(
+        &cfg,
+        "default_profile = \"qa\"\n[profiles.qa]\nendpoint = \"http://qa:1\"\napi_key = \"secreta99\"\ndownload_dir = \"~/Descargas\"\n",
+    )
+    .unwrap();
+
+    let mut cmd = Command::cargo_bin("alberto").unwrap();
+    cmd.env("ALBERTO_CONFIG", &cfg)
+        .args(["config", "show"])
+        .assert()
+        .success()
+        .stdout(contains("download_dir: ~/Descargas"));
+}
+
+#[test]
 fn completions_zsh() {
     Command::cargo_bin("alberto")
         .unwrap()

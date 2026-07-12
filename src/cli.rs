@@ -56,6 +56,9 @@ pub enum Cmd {
         /// Tenant cuyo document library se navega
         #[arg(long)]
         tenant: String,
+        /// Directorio de descargas del TUI (default: download_dir del perfil, o el directorio actual)
+        #[arg(long)]
+        download_dir: Option<PathBuf>,
         #[command(flatten)]
         grpc: GrpcOpts,
     },

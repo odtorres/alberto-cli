@@ -55,6 +55,9 @@ pub fn run(cmd: ConfigCmd) -> Result<()> {
                 p.endpoint.as_deref().unwrap_or(DEFAULT_ENDPOINT)
             );
             println!("api_key:  {}", mask(p.api_key.as_deref().unwrap_or("")));
+            if let Some(dir) = &p.download_dir {
+                println!("download_dir: {dir}");
+            }
             Ok(())
         }
     }

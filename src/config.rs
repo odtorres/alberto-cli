@@ -22,6 +22,7 @@ pub struct Config {
 pub struct Profile {
     pub endpoint: Option<String>,
     pub api_key: Option<String>,
+    pub download_dir: Option<String>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -79,6 +80,21 @@ pub fn resolve(
     Ok((endpoint, api_key))
 }
 
+/// Expande "~/" al home del usuario; el resto queda igual.
+pub fn expand_home(path: &str) -> PathBuf {
+    if let Some(rest) = path.strip_prefix("~/") {
+        return dirs::home_dir().unwrap_or_default().join(rest);
+    }
+    PathBuf::from(path)
+}
+
+/// download_dir del perfil elegido (o del default_profile). No valida
+/// nombres: un perfil inexistente simplemente no aporta valor.
+pub fn profile_download_dir(cfg: &Config, profile: Option<&str>) -> Option<String> {
+    let name = profile.or(cfg.default_profile.as_deref())?;
+    cfg.profiles.get(name)?.download_dir.clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,6 +110,7 @@ mod tests {
                         Profile {
                             endpoint: Some(e.to_string()),
                             api_key: Some(k.to_string()),
+                            ..Default::default()
                         },
                     )
                 })
@@ -169,5 +186,23 @@ mod tests {
     fn load_from_inexistente_es_default() {
         let cfg = load_from(Path::new("/no/existe/c.toml")).unwrap();
         assert!(cfg.profiles.is_empty());
+    }
+
+    #[test]
+    fn expand_home_expande_tilde() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(expand_home("~/Descargas"), home.join("Descargas"));
+        assert_eq!(expand_home("/abs/x"), PathBuf::from("/abs/x"));
+        assert_eq!(expand_home("rel/x"), PathBuf::from("rel/x"));
+    }
+
+    #[test]
+    fn profile_download_dir_usa_perfil_o_default() {
+        let mut cfg = cfg_with(Some("qa"), &[("qa", "http://qa:1", "k")]);
+        assert_eq!(profile_download_dir(&cfg, None), None);
+        cfg.profiles.get_mut("qa").unwrap().download_dir = Some("~/dl".into());
+        assert_eq!(profile_download_dir(&cfg, None), Some("~/dl".into()));
+        assert_eq!(profile_download_dir(&cfg, Some("qa")), Some("~/dl".into()));
+        assert_eq!(profile_download_dir(&cfg, Some("nope")), None);
     }
 }
