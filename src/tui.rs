@@ -44,6 +44,14 @@ struct Level {
     parent_id: String,
     nodes: Vec<Value>,
     state: ListState,
+    filter: String,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+enum Mode {
+    Browse,
+    Filter,
+    Preview,
 }
 
 struct Preview {
@@ -61,6 +69,7 @@ struct App {
     levels: Vec<Level>,
     preview: Option<Preview>,
     status: String,
+    mode: Mode,
 }
 
 // ---------------------------------------------------------------------------
@@ -82,8 +91,9 @@ pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
         levels: vec![level(format!("doclib {tenant}"), doclib_id.clone(), nodes)],
         preview: None,
         status:
-            "↑↓ mover · Enter entrar/preview · Backspace subir · p preview · d descargar · r refrescar · q salir"
+            "↑↓ mover · Enter entrar/preview · Backspace subir · / filtrar · p preview · d descargar · r refrescar · q salir"
                 .into(),
+        mode: Mode::Browse,
     };
 
     enable_raw_mode()?;
@@ -109,7 +119,27 @@ fn level(title: String, parent_id: String, nodes: Vec<Value>) -> Level {
         parent_id,
         nodes,
         state,
+        filter: String::new(),
     }
+}
+
+/// Subsecuencia case-insensitive (estilo fzf): "fac" matchea "Factura_2026".
+fn fuzzy_match(filter: &str, name: &str) -> bool {
+    let mut name_chars = name.chars().flat_map(char::to_lowercase);
+    filter
+        .chars()
+        .flat_map(char::to_lowercase)
+        .all(|f| name_chars.any(|c| c == f))
+}
+
+/// Índices (en lvl.nodes) visibles bajo el filtro actual.
+fn filtered_indices(lvl: &Level) -> Vec<usize> {
+    lvl.nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| fuzzy_match(&lvl.filter, n["name"].as_str().unwrap_or("")))
+        .map(|(i, _)| i)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -125,31 +155,68 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut A
                 continue;
             }
 
-            // modo preview: navegación de páginas
-            if app.preview.is_some() {
-                match key.code {
-                    KeyCode::Esc | KeyCode::Char('q') => app.preview = None,
+            match app.mode {
+                Mode::Preview => match key.code {
+                    KeyCode::Esc | KeyCode::Char('q') => {
+                        app.preview = None;
+                        app.mode = Mode::Browse;
+                    }
                     KeyCode::Left => change_page(app, -1),
                     KeyCode::Right => change_page(app, 1),
                     _ => {}
-                }
-                continue;
-            }
-
-            match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                KeyCode::Up => move_sel(app, -1),
-                KeyCode::Down => move_sel(app, 1),
-                KeyCode::Backspace | KeyCode::Left => {
-                    if app.levels.len() > 1 {
-                        app.levels.pop();
+                },
+                Mode::Filter => match key.code {
+                    KeyCode::Esc => {
+                        if let Some(lvl) = app.levels.last_mut() {
+                            lvl.filter.clear();
+                            reselect(lvl);
+                        }
+                        app.mode = Mode::Browse;
                     }
-                }
-                KeyCode::Enter | KeyCode::Right => enter(app),
-                KeyCode::Char('p') => open_preview(app),
-                KeyCode::Char('d') => download_selected(app),
-                KeyCode::Char('r') => refresh(app),
-                _ => {}
+                    KeyCode::Enter => app.mode = Mode::Browse,
+                    KeyCode::Backspace => {
+                        if let Some(lvl) = app.levels.last_mut() {
+                            lvl.filter.pop();
+                            reselect(lvl);
+                        }
+                    }
+                    KeyCode::Up => move_sel(app, -1),
+                    KeyCode::Down => move_sel(app, 1),
+                    KeyCode::Char(c) => {
+                        if let Some(lvl) = app.levels.last_mut() {
+                            lvl.filter.push(c);
+                            reselect(lvl);
+                        }
+                    }
+                    _ => {}
+                },
+                Mode::Browse => match key.code {
+                    KeyCode::Char('q') => return Ok(()),
+                    KeyCode::Esc => match app.levels.last_mut() {
+                        Some(lvl) if !lvl.filter.is_empty() => {
+                            lvl.filter.clear();
+                            reselect(lvl);
+                        }
+                        _ => return Ok(()),
+                    },
+                    KeyCode::Char('/') => app.mode = Mode::Filter,
+                    KeyCode::Up => move_sel(app, -1),
+                    KeyCode::Down => move_sel(app, 1),
+                    KeyCode::Backspace | KeyCode::Left => {
+                        if app.levels.len() > 1 {
+                            app.levels.pop();
+                            if let Some(lvl) = app.levels.last_mut() {
+                                lvl.filter.clear();
+                                reselect(lvl);
+                            }
+                        }
+                    }
+                    KeyCode::Enter | KeyCode::Right => enter(app),
+                    KeyCode::Char('p') => open_preview(app),
+                    KeyCode::Char('d') => download_selected(app),
+                    KeyCode::Char('r') => refresh(app),
+                    _ => {}
+                },
             }
         }
     }
@@ -157,12 +224,14 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut A
 
 fn current(app: &App) -> Option<&Value> {
     let lvl = app.levels.last()?;
-    lvl.nodes.get(lvl.state.selected()?)
+    let visible = filtered_indices(lvl);
+    let pos = lvl.state.selected()?;
+    lvl.nodes.get(*visible.get(pos)?)
 }
 
 fn move_sel(app: &mut App, delta: i32) {
     if let Some(lvl) = app.levels.last_mut() {
-        let n = lvl.nodes.len();
+        let n = filtered_indices(lvl).len();
         if n == 0 {
             return;
         }
@@ -170,6 +239,12 @@ fn move_sel(app: &mut App, delta: i32) {
         let next = (cur + delta).rem_euclid(n as i32) as usize;
         lvl.state.select(Some(next));
     }
+}
+
+/// Tras cambiar el filtro (o el nivel visible): primera coincidencia o nada.
+fn reselect(lvl: &mut Level) {
+    let n = filtered_indices(lvl).len();
+    lvl.state.select(if n == 0 { None } else { Some(0) });
 }
 
 fn enter(app: &mut App) {
@@ -204,15 +279,12 @@ fn refresh(app: &mut App) {
     let lvl = app.levels.last_mut().unwrap();
     match fetched {
         Ok(nodes) => {
-            let sel = lvl
-                .state
-                .selected()
-                .unwrap_or(0)
-                .min(nodes.len().saturating_sub(1));
-            lvl.state
-                .select(if nodes.is_empty() { None } else { Some(sel) });
-            app.status = format!("refrescado: {} elementos", nodes.len());
+            let count = nodes.len();
             lvl.nodes = nodes;
+            let n = filtered_indices(lvl).len();
+            let sel = lvl.state.selected().unwrap_or(0).min(n.saturating_sub(1));
+            lvl.state.select(if n == 0 { None } else { Some(sel) });
+            app.status = format!("refrescado: {count} elementos");
         }
         Err(e) => app.status = format!("refresh: {e:#}"),
     }
@@ -245,6 +317,7 @@ fn open_preview(app: &mut App) {
                 p.total_pages
             );
             app.preview = Some(p);
+            app.mode = Mode::Preview;
         }
         Err(e) => app.status = format!("preview: {e:#}"),
     }
@@ -361,7 +434,15 @@ fn draw(f: &mut ratatui::Frame, app: &mut App) {
         draw_detail(f, app, panes[1]);
     }
 
-    let status = Paragraph::new(Line::from(app.status.clone()))
+    let status_text = if app.mode == Mode::Filter {
+        format!(
+            "🔎 {}▏ · Esc limpiar · Enter aplicar",
+            app.levels.last().map(|l| l.filter.as_str()).unwrap_or("")
+        )
+    } else {
+        app.status.clone()
+    };
+    let status = Paragraph::new(Line::from(status_text))
         .style(Style::default().fg(Color::Black).bg(Color::Cyan));
     f.render_widget(status, outer[1]);
 }
@@ -375,24 +456,29 @@ fn draw_list(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .join(" / ");
 
     let lvl = app.levels.last_mut().unwrap();
+    let visible = filtered_indices(lvl);
 
-    let items: Vec<ListItem> = lvl
-        .nodes
+    let items: Vec<ListItem> = visible
         .iter()
-        .map(|n| {
+        .map(|&i| {
+            let n = &lvl.nodes[i];
             let name = n["name"].as_str().unwrap_or("?");
-            let has_content = n["content"].as_bool().unwrap_or(false);
-            let icon = if has_content { "📄" } else { "📁" };
+            let icon = if n["content"].as_bool().unwrap_or(false) {
+                "📄"
+            } else {
+                "📁"
+            };
             ListItem::new(format!("{icon} {name}"))
         })
         .collect();
 
+    let mut title = format!(" {breadcrumb} ");
+    if !lvl.filter.is_empty() {
+        title = format!(" {breadcrumb} · 🔎 {} ", lvl.filter);
+    }
+
     let list = List::new(items)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(" {breadcrumb} ")),
-        )
+        .block(Block::default().borders(Borders::ALL).title(title))
         .highlight_style(
             Style::default()
                 .bg(Color::Cyan)
@@ -611,5 +697,30 @@ mod tests {
         assert_eq!(sanitize_filename(""), "descarga.bin");
         assert_eq!(sanitize_filename("..."), "descarga.bin");
         assert_eq!(sanitize_filename("a\\b/c"), "a_b_c");
+    }
+
+    #[test]
+    fn fuzzy_match_subsecuencia_case_insensitive() {
+        assert!(fuzzy_match("fac", "factura_2026.pdf"));
+        assert!(fuzzy_match("FAC", "factura"));
+        assert!(fuzzy_match("f26", "factura_2026"));
+        assert!(fuzzy_match("", "cualquiera"));
+        assert!(!fuzzy_match("xyz", "factura"));
+        assert!(!fuzzy_match("aa", "a"));
+        assert!(!fuzzy_match("caf", "fac")); // orden importa (subsecuencia)
+    }
+
+    #[test]
+    fn filtered_indices_respeta_filtro() {
+        let mk = |name: &str| serde_json::json!({ "name": name });
+        let mut lvl = level(
+            "t".into(),
+            "p".into(),
+            vec![mk("factura_enero"), mk("contrato"), mk("factura_feb")],
+        );
+        lvl.filter = "fac".into();
+        assert_eq!(filtered_indices(&lvl), vec![0, 2]);
+        lvl.filter.clear();
+        assert_eq!(filtered_indices(&lvl), vec![0, 1, 2]);
     }
 }
