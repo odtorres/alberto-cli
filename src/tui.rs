@@ -13,6 +13,7 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use image::RgbaImage;
@@ -39,6 +40,8 @@ use crate::client::{nm_client, nodemanager, with_key};
 // Estado
 // ---------------------------------------------------------------------------
 
+const AUTO_REFRESH_EVERY: Duration = Duration::from_secs(5);
+
 struct Level {
     title: String,
     parent_id: String,
@@ -63,6 +66,10 @@ struct Preview {
     img: RgbaImage,
 }
 
+fn should_auto_refresh(enabled: bool, mode: Mode, elapsed: Duration) -> bool {
+    enabled && mode == Mode::Browse && elapsed >= AUTO_REFRESH_EVERY
+}
+
 struct App {
     client: NodeManagerServiceClient<Channel>,
     api_key: String,
@@ -70,6 +77,8 @@ struct App {
     preview: Option<Preview>,
     status: String,
     mode: Mode,
+    auto_refresh: bool,
+    last_refresh: Instant,
 }
 
 // ---------------------------------------------------------------------------
@@ -91,9 +100,11 @@ pub fn run(tenant: String, grpc: GrpcOpts) -> Result<()> {
         levels: vec![level(format!("doclib {tenant}"), doclib_id.clone(), nodes)],
         preview: None,
         status:
-            "↑↓ mover · Enter entrar/preview · Backspace subir · / filtrar · p preview · d descargar · r refrescar · q salir"
+            "↑↓ mover · Enter entrar/preview · Backspace subir · / filtrar · a auto · p preview · d descargar · r refrescar · q salir"
                 .into(),
         mode: Mode::Browse,
+        auto_refresh: false,
+        last_refresh: Instant::now(),
     };
 
     enable_raw_mode()?;
@@ -149,6 +160,13 @@ fn filtered_indices(lvl: &Level) -> Vec<usize> {
 fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> Result<()> {
     loop {
         terminal.draw(|f| draw(f, app))?;
+
+        if !event::poll(Duration::from_secs(1))? {
+            if should_auto_refresh(app.auto_refresh, app.mode, app.last_refresh.elapsed()) {
+                refresh(app);
+            }
+            continue;
+        }
 
         if let Event::Key(key) = event::read()? {
             if key.kind != KeyEventKind::Press {
@@ -215,6 +233,14 @@ fn event_loop(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut A
                     KeyCode::Char('p') => open_preview(app),
                     KeyCode::Char('d') => download_selected(app),
                     KeyCode::Char('r') => refresh(app),
+                    KeyCode::Char('a') => {
+                        app.auto_refresh = !app.auto_refresh;
+                        app.status = if app.auto_refresh {
+                            "auto ⟳ 5s activado".into()
+                        } else {
+                            "auto ⟳ desactivado".into()
+                        };
+                    }
                     _ => {}
                 },
             }
@@ -272,6 +298,7 @@ fn enter(app: &mut App) {
 }
 
 fn refresh(app: &mut App) {
+    app.last_refresh = Instant::now();
     let Some(parent_id) = app.levels.last().map(|l| l.parent_id.clone()) else {
         return;
     };
@@ -722,5 +749,34 @@ mod tests {
         assert_eq!(filtered_indices(&lvl), vec![0, 2]);
         lvl.filter.clear();
         assert_eq!(filtered_indices(&lvl), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn auto_refresh_solo_en_browse_con_5s() {
+        assert!(should_auto_refresh(
+            true,
+            Mode::Browse,
+            Duration::from_secs(5)
+        ));
+        assert!(!should_auto_refresh(
+            true,
+            Mode::Browse,
+            Duration::from_secs(4)
+        ));
+        assert!(!should_auto_refresh(
+            false,
+            Mode::Browse,
+            Duration::from_secs(60)
+        ));
+        assert!(!should_auto_refresh(
+            true,
+            Mode::Filter,
+            Duration::from_secs(60)
+        ));
+        assert!(!should_auto_refresh(
+            true,
+            Mode::Preview,
+            Duration::from_secs(60)
+        ));
     }
 }
