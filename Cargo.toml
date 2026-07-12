@@ -1,6 +1,6 @@
 [package]
 name = "alberto-cli"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "CLI para NodeService: upload por gRPC streaming (backpressure), operaciones de nodos y TUI con preview de PDFs"
 license = "MIT OR Apache-2.0"
