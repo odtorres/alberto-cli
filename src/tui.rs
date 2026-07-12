@@ -57,13 +57,31 @@ enum Mode {
     Preview,
 }
 
+#[derive(Debug)]
+enum PreviewSource {
+    Pdf {
+        pdf_path: PathBuf,
+        _dir: tempfile::TempDir,
+        total_pages: usize,
+    },
+    Image,
+}
+
+#[derive(Debug)]
 struct Preview {
     name: String,
-    pdf_path: PathBuf,
-    _dir: tempfile::TempDir,
-    total_pages: usize,
+    source: PreviewSource,
     page: usize,
     img: RgbaImage,
+}
+
+impl Preview {
+    fn total_pages(&self) -> usize {
+        match &self.source {
+            PreviewSource::Pdf { total_pages, .. } => *total_pages,
+            PreviewSource::Image => 1,
+        }
+    }
 }
 
 fn should_auto_refresh(enabled: bool, mode: Mode, elapsed: Duration) -> bool {
@@ -341,7 +359,7 @@ fn open_preview(app: &mut App) {
         Ok(p) => {
             app.status = format!(
                 "{name} — página 1/{} · ←→ páginas · Esc cerrar",
-                p.total_pages
+                p.total_pages()
             );
             app.preview = Some(p);
             app.mode = Mode::Preview;
@@ -351,44 +369,67 @@ fn open_preview(app: &mut App) {
 }
 
 fn build_preview(name: &str, bytes: Vec<u8>) -> Result<Preview> {
-    if !bytes.starts_with(b"%PDF") {
-        bail!("solo hay preview para PDFs (el contenido no es PDF)");
+    if bytes.starts_with(b"%PDF") {
+        let dir = tempfile::tempdir().context("no se pudo crear tmpdir")?;
+        let pdf_path = dir.path().join("doc.pdf");
+        std::fs::write(&pdf_path, &bytes)?;
+
+        let total_pages = pdf_pages(&pdf_path).unwrap_or(1);
+        let img = render_page(&pdf_path, 1, dir.path())?;
+
+        return Ok(Preview {
+            name: name.to_string(),
+            source: PreviewSource::Pdf {
+                pdf_path,
+                _dir: dir,
+                total_pages,
+            },
+            page: 1,
+            img,
+        });
     }
 
-    let dir = tempfile::tempdir().context("no se pudo crear tmpdir")?;
-    let pdf_path = dir.path().join("doc.pdf");
-    std::fs::write(&pdf_path, &bytes)?;
+    if bytes.starts_with(b"\x89PNG") || bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        let img = image::load_from_memory(&bytes)
+            .context("no se pudo decodificar la imagen")?
+            .to_rgba8();
+        return Ok(Preview {
+            name: name.to_string(),
+            source: PreviewSource::Image,
+            page: 1,
+            img,
+        });
+    }
 
-    let total_pages = pdf_pages(&pdf_path).unwrap_or(1);
-    let img = render_page(&pdf_path, 1, dir.path())?;
-
-    Ok(Preview {
-        name: name.to_string(),
-        pdf_path,
-        _dir: dir,
-        total_pages,
-        page: 1,
-        img,
-    })
+    bail!("solo hay preview para PDFs o imágenes (PNG/JPEG)");
 }
 
 fn change_page(app: &mut App, delta: i32) {
     let Some(p) = app.preview.as_mut() else {
         return;
     };
+    let PreviewSource::Pdf {
+        pdf_path,
+        total_pages,
+        ..
+    } = &p.source
+    else {
+        return; // imágenes: una sola "página"
+    };
     let next = p.page as i32 + delta;
-    if next < 1 || next > p.total_pages as i32 {
+    if next < 1 || next > *total_pages as i32 {
         return;
     }
 
-    let tmp = p.pdf_path.parent().unwrap().to_path_buf();
-    match render_page(&p.pdf_path, next as usize, &tmp) {
+    let tmp = pdf_path.parent().unwrap().to_path_buf();
+    let total = *total_pages;
+    match render_page(pdf_path, next as usize, &tmp) {
         Ok(img) => {
             p.page = next as usize;
             p.img = img;
             app.status = format!(
                 "{} — página {}/{} · ←→ páginas · Esc cerrar",
-                p.name, p.page, p.total_pages
+                p.name, p.page, total
             );
         }
         Err(e) => app.status = format!("página: {e:#}"),
@@ -533,7 +574,9 @@ fn draw_preview(f: &mut ratatui::Frame, app: &App, area: Rect) {
     let p = app.preview.as_ref().unwrap();
     let block = Block::default().borders(Borders::ALL).title(format!(
         " 📄 {} — pág {}/{} ",
-        p.name, p.page, p.total_pages
+        p.name,
+        p.page,
+        p.total_pages()
     ));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -708,13 +751,38 @@ mod tests {
         });
         let bytes = std::fs::read(pdf).unwrap();
         let p = build_preview("test.pdf", bytes).expect("build_preview");
-        assert_eq!(p.total_pages, 1);
+        assert_eq!(p.total_pages(), 1);
         assert!(p.img.width() > 100 && p.img.height() > 100);
     }
 
     #[test]
-    fn rechaza_no_pdf() {
-        assert!(build_preview("x.bin", b"no soy pdf".to_vec()).is_err());
+    fn preview_png_generado() {
+        let img = image::RgbaImage::from_pixel(200, 150, image::Rgba([10, 20, 30, 255]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, image::ImageFormat::Png)
+            .unwrap();
+        let p = build_preview("x.png", buf.into_inner()).expect("preview png");
+        assert_eq!(p.total_pages(), 1);
+        assert_eq!(p.img.width(), 200);
+    }
+
+    #[test]
+    fn preview_jpeg_generado() {
+        let img = image::RgbaImage::from_pixel(120, 80, image::Rgba([200, 100, 50, 255]));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, image::ImageFormat::Jpeg)
+            .unwrap();
+        let p = build_preview("x.jpg", buf.into_inner()).expect("preview jpeg");
+        assert_eq!(p.total_pages(), 1);
+        assert_eq!(p.img.width(), 120);
+    }
+
+    #[test]
+    fn rechaza_contenido_desconocido() {
+        let err = build_preview("x.bin", b"no soy pdf ni imagen".to_vec()).unwrap_err();
+        assert!(format!("{err:#}").contains("PNG/JPEG"));
     }
 
     #[test]
